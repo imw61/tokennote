@@ -1,0 +1,91 @@
+name: Release
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*' # 当你推送以 v 开头的标签时触发，例如 v1.0.0
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            platform: macos-latest
+            rustTargets: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles dmg
+          - name: macOS Intel
+            platform: macos-latest
+            rustTargets: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles dmg
+          - name: Windows x64
+            platform: windows-latest
+            rustTargets: ""
+            args: --bundles msi,nsis
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rustTargets }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ./src-tauri -> target
+
+      - name: Sync node version and setup cache
+        uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build the app
+        id: tauri_build
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "TokenNote ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download the latest version."
+          releaseDraft: true
+          prerelease: false
+          projectPath: .
+          args: ${{ matrix.args }}
+
+      - name: Build Windows portable package
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          $portableName = "TokenNote_${version}_windows-x64_portable.zip"
+          $binaryPath = "src-tauri/target/release/tokennote.exe"
+          $portableDir = "src-tauri/target/release/portable"
+
+          if (!(Test-Path $binaryPath)) {
+            throw "Portable binary not found: $binaryPath"
+          }
+
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item $binaryPath -Destination "$portableDir/tokennote.exe" -Force
+          Compress-Archive -Path "$portableDir/*" -DestinationPath "src-tauri/target/release/$portableName" -Force
+
+      - name: Upload Windows portable package
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" "src-tauri/target/release/TokenNote_${{ github.ref_name }}_windows-x64_portable.zip" --clobber

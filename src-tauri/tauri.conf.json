@@ -1,0 +1,103 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TokenNote",
+  "version": "0.2.1",
+  "identifier": "com.tokennote.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "widget",
+        "title": "TokenNote · 摘要",
+        "width": 210,
+        "height": 180,
+        "minWidth": 146,
+        "minHeight": 86,
+        "maxWidth": 320,
+        "maxHeight": 340,
+        "resizable": false,
+        "maximizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": true,
+        "url": "/windows/widget.html",
+        "skipTaskbar": true,
+        "center": false,
+        "x": 20,
+        "y": 100
+      },
+      {
+        "label": "main",
+        "title": "TokenNote",
+        "width": 390,
+        "height": 720,
+        "minWidth": 340,
+        "minHeight": 520,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "url": "/windows/index.html"
+      },
+      {
+        "label": "update",
+        "title": "TokenNote · 更新提醒",
+        "width": 520,
+        "height": 290,
+        "minWidth": 480,
+        "minHeight": 290,
+        "maxWidth": 560,
+        "maxHeight": 520,
+        "resizable": false,
+        "decorations": false,
+        "transparent": false,
+        "shadow": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "center": true,
+        "url": "/windows/update.html"
+      },
+      {
+        "label": "low-balance-alert",
+        "title": "TokenNote · 低余额提醒",
+        "width": 360,
+        "height": 172,
+        "minWidth": 360,
+        "minHeight": 172,
+        "maxWidth": 360,
+        "maxHeight": 420,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "center": true,
+        "url": "/windows/low-balance-alert.html"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' asset: http://asset.localhost https://asset.localhost; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: blob: http: https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost ws: wss: http: https:; media-src 'self' asset: data: blob:; frame-src 'self' http: https:;",
+      "capabilities": ["default"]
+    },
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"],
+    "resources": ["icons/tray-macos.png", "icons/tray-windows.png"]
+  }
+}
