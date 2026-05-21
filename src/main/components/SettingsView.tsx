@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import { AlertTriangle, Download, Layers3, Upload } from 'lucide-react'
 import { ConfigTransferDialog } from './ConfigTransferDialog'
+import { SecurityStatusCard } from './SecurityStatusCard'
 import type { AppSettings, PersistenceNotice } from '../types'
 import type { ConfigTransferDialogState } from '../component-props'
 import {
@@ -212,6 +213,8 @@ export function SettingsView({
           </div>
         </div>
       ) : null}
+
+      <SecurityStatusCard />
 
       <div className="rounded-2xl border border-gray-100 bg-gray-50/80 p-4 shadow-sm">
         <div className="flex flex-col gap-3">

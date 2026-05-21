@@ -30,10 +30,17 @@ html.low-balance-alert-page, body.low-balance-alert-page {
   scrollbar-width: none;
 }
 
+html.security-notice-page, body.security-notice-page {
+  @apply h-full m-0 overflow-hidden bg-transparent;
+  scrollbar-width: none;
+}
+
 html.widget-page::-webkit-scrollbar,
 body.widget-page::-webkit-scrollbar,
 html.low-balance-alert-page::-webkit-scrollbar,
-body.low-balance-alert-page::-webkit-scrollbar {
+body.low-balance-alert-page::-webkit-scrollbar,
+html.security-notice-page::-webkit-scrollbar,
+body.security-notice-page::-webkit-scrollbar {
   display: none;
 }
 
@@ -50,6 +57,10 @@ body.low-balance-alert-page::-webkit-scrollbar {
 }
 
 #low-balance-alert-root {
+  @apply w-full h-full m-0 bg-transparent overflow-hidden;
+}
+
+#security-notice-root {
   @apply w-full h-full m-0 bg-transparent overflow-hidden;
 }
 

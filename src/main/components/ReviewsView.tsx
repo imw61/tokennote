@@ -1,4 +1,5 @@
 import { ArrowLeft, Send, Star } from 'lucide-react'
+import { formatStationReviewRatingLabel } from '../../lib/reviews'
 import type { LocalStationReviewRecord, Station } from '../types'
 import { formatDateTime, stationTypeLabel } from '../utils'
 
@@ -64,7 +65,10 @@ export function ReviewsView({
           {localReview ? (
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 px-3 py-3 text-[11px] text-emerald-700">
               <div className="font-extrabold">本机已提交过该中转站评价</div>
-              <div className="mt-1">评分：{localReview.rating} 星</div>
+              <div className="mt-1">
+                评分：{formatStationReviewRatingLabel(localReview.rating)}
+                <span className="ml-1 text-emerald-600/80">({localReview.rating} 星)</span>
+              </div>
               <div className="mt-1 leading-relaxed text-emerald-800">{localReview.content}</div>
               <div className="mt-1 text-[10px] font-semibold text-emerald-600">
                 提交时间：{formatDateTime(localReview.submittedAt)}
@@ -88,18 +92,17 @@ export function ReviewsView({
                         ? 'text-amber-400 hover:text-amber-500'
                         : 'text-gray-200 hover:text-amber-300'
                     } disabled:cursor-not-allowed disabled:opacity-45`}
-                    aria-label={`${value} 星`}
-                    title={`${value} 星`}
+                    aria-label={`${formatStationReviewRatingLabel(value)}（${value} 星）`}
+                    title={`${formatStationReviewRatingLabel(value)}（${value} 星）`}
                   >
                     <Star size={22} strokeWidth={1.8} className={`${active ? 'fill-current drop-shadow-[0_1px_4px_rgba(251,191,36,0.28)]' : ''}`} />
                   </button>
                 )
               })}
               <span className="ml-2 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-extrabold text-amber-600">
-                {draft.rating} 星
+                {formatStationReviewRatingLabel(draft.rating)}
               </span>
             </div>
-            <div className="mt-1 text-[10px] font-semibold text-gray-400">点击星星即可评分，1 星最低，5 星最高。</div>
           </div>
 
           <label className="block">

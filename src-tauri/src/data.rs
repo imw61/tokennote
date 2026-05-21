@@ -369,10 +369,33 @@ fn parse_data_file(path: &Path) -> Result<AppData, ParseDataError> {
     let mut data: AppData = serde_json::from_str(&content)
         .map_err(|error| ParseDataError::Parse(format!("解析配置文件失败: {error}")))?;
     if let Some(app_dir) = path.parent() {
-        secure_storage::decrypt_data(&mut data, &app_dir.to_path_buf())
-            .map_err(|error| ParseDataError::Decrypt(format!("解密配置文件失败: {error}")))?;
+        secure_storage::decrypt_data(&mut data, app_dir)
+            .map_err(|error| ParseDataError::Decrypt(error.user_message()))?;
     }
     Ok(normalize_loaded_data(data))
+}
+
+/// 解密失败时使用：保留站点的元数据用于展示，但清掉敏感字段并禁用刷新，
+/// 避免把密文当作 cookie / 密码送给后端接口。原磁盘文件不会被改写。
+fn scaffold_after_decrypt_failure(path: &Path) -> AppData {
+    let raw = match fs::read_to_string(path) {
+        Ok(value) => value,
+        Err(_) => return AppData::default(),
+    };
+    let mut data: AppData = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(_) => return AppData::default(),
+    };
+    for station in &mut data.stations {
+        station.cookie.clear();
+        station.new_api_user.clear();
+        station.login_username.clear();
+        station.login_password.clear();
+        station.enabled = false;
+    }
+    // 历史数据可读，但和无法刷新的站点配套展示意义不大，保留为空更直观。
+    data.snapshots.clear();
+    normalize_loaded_data(data)
 }
 
 fn preserve_corrupt_file(path: &Path, reason: &str) -> Result<Option<PathBuf>, String> {
@@ -399,7 +422,7 @@ pub(crate) fn persist_data(path: &PathBuf, data: &AppData) -> Result<(), String>
     }
     let mut encrypted_data = data.clone();
     if let Some(app_dir) = path.parent() {
-        secure_storage::encrypt_data(&mut encrypted_data, &app_dir.to_path_buf())
+        secure_storage::encrypt_data(&mut encrypted_data, app_dir)
             .map_err(|error| format!("加密配置文件失败: {error}"))?;
     }
     let content =
@@ -422,14 +445,22 @@ pub(crate) fn load_data(path: &PathBuf) -> Result<LoadDataResult, String> {
             should_persist: false,
             warning: None,
         }),
-        Err(ParseDataError::Decrypt(_primary_error)) => Ok(LoadDataResult {
-            data: AppData::default(),
-            should_persist: false,
-            warning: Some(PersistenceNotice {
-                level: "error".to_string(),
-                message: "读取本地数据失败，请重启应用后重试。".to_string(),
-            }),
-        }),
+        Err(ParseDataError::Decrypt(primary_error)) => {
+            // 解密失败：不清空磁盘文件，保留原密文等待用户自助修复（重新登录或导入备份）。
+            // 内存中仅保留站点元数据并把敏感字段清空，避免前端把密文当成 cookie 请求接口。
+            let scaffold = scaffold_after_decrypt_failure(path);
+            Ok(LoadDataResult {
+                data: scaffold,
+                should_persist: false,
+                warning: Some(PersistenceNotice {
+                    level: "error".to_string(),
+                    message: format!(
+                        "{} 已自动停用所有中转站；可在设置中“配置文件转移”导入备份恢复，或删除站点后重新登录。原文件未被修改。",
+                        primary_error
+                    ),
+                }),
+            })
+        }
         Err(ParseDataError::Read(_primary_error)) => Ok(LoadDataResult {
             data: AppData::default(),
             should_persist: false,

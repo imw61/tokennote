@@ -14,6 +14,8 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 mod data;
+mod key_derivation;
+mod key_storage;
 mod models;
 mod providers;
 mod refresh;
@@ -45,9 +47,10 @@ use security::normalize_station_base_url;
 use windowing::{
     apply_always_on_top, apply_widget_visibility, deepseek_console_base_url,
     deepseek_console_script, hide_low_balance_alert_window_internal, hide_main_window_internal,
-    hide_update_window_internal, load_tray_icon, minimize_main_window_internal,
-    newapi_console_script, open_console_webview, show_main_window_internal,
-    show_update_window_internal, station_console_label, sub2api_console_script,
+    hide_security_notice_window_internal, hide_update_window_internal, load_tray_icon,
+    minimize_main_window_internal, newapi_console_script, open_console_webview,
+    show_main_window_internal, show_security_notice_window_internal, show_update_window_internal,
+    station_console_label, sub2api_console_script,
 };
 #[cfg(target_os = "macos")]
 use windowing::{clear_ns_window_background, ensure_macos_app_icon, sync_macos_dock_visibility};
@@ -643,6 +646,16 @@ async fn hide_low_balance_alert_window(
 }
 
 #[tauri::command]
+async fn hide_security_notice_window(app: AppHandle) -> Result<(), String> {
+    hide_security_notice_window_internal(&app)
+}
+
+#[tauri::command]
+async fn get_machine_uuid() -> String {
+    machine_uid::get().unwrap_or_default()
+}
+
+#[tauri::command]
 async fn snap_to_edge(app: AppHandle, auto_hide: Option<bool>) -> Result<(), String> {
     let window = app
         .get_webview_window("widget")
@@ -836,6 +849,13 @@ pub fn run() {
                 low_balance_alerted_station_ids: Arc::new(Mutex::new(HashSet::new())),
             });
             start_scheduler(app.handle().clone(), loaded_data, data_path);
+
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                let _ = show_security_notice_window_internal(&app_handle);
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -860,6 +880,8 @@ pub fn run() {
             hide_update_window,
             get_low_balance_alert_payload,
             hide_low_balance_alert_window,
+            hide_security_notice_window,
+            get_machine_uuid,
             snap_to_edge
         ])
         .run(tauri::generate_context!())

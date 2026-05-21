@@ -9,9 +9,7 @@ export type StationReviewInput = {
   baseUrl: string
   stationType: string
   rating: number
-  title: string
   content: string
-  reviewerName: string
 }
 
 export type StationReviewRecord = {
@@ -21,11 +19,21 @@ export type StationReviewRecord = {
   baseUrl: string
   stationType: string
   rating: number
-  title: string
   content: string
-  reviewerName: string
   clientVersion: string
   source: string
+}
+
+export const stationReviewRatingLabels: Record<number, string> = {
+  1: '拉完了',
+  2: 'NPC',
+  3: '人上人',
+  4: '顶级',
+  5: '夯爆了'
+}
+
+export function formatStationReviewRatingLabel(rating: number) {
+  return stationReviewRatingLabels[rating] ?? `${rating} 星`
 }
 
 const reviewApiUrl = 'https://update.tokennote.dev/api/reviews'
@@ -38,15 +46,25 @@ async function resolveCurrentVersion() {
   }
 }
 
+async function resolveMachineUuid() {
+  try {
+    return (await invoke<string>('get_machine_uuid')).trim()
+  } catch {
+    return ''
+  }
+}
+
 export async function submitStationReview(input: StationReviewInput): Promise<StationReviewRecord> {
   const currentVersion = await resolveCurrentVersion()
+  const machineUuid = await resolveMachineUuid()
   const response = await fetch(reviewApiUrl, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       accept: 'application/json',
       'x-tokennote-version': currentVersion,
-      'x-tokennote-source': 'desktop'
+      'x-tokennote-source': 'desktop',
+      ...(machineUuid ? { 'x-tokennote-machine-uuid': machineUuid } : {})
     },
     body: JSON.stringify(input)
   })

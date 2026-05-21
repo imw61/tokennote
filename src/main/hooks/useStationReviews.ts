@@ -54,9 +54,7 @@ export function useStationReviews({ station, localStationReviews, onLocalReviewS
       baseUrl: station.baseUrl.trim(),
       stationType: station.stationType.trim() || 'newapi',
       rating: draft.rating,
-      content: draft.content.trim(),
-      title: '',
-      reviewerName: ''
+      content: draft.content.trim()
     }
 
     if (!requestBody.baseUrl) {

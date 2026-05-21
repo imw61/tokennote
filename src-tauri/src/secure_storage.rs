@@ -1,69 +1,66 @@
+//! 站点凭据字段的对称加密
+//!
+//! - 算法：AES-256-GCM（AEAD，自带完整性校验）
+//! - 密钥：来自 `key_derivation::derive_master_key_*`，由机器码派生
+//! - 密文格式：`ENC:v2:<base64(nonce(12) || ciphertext || tag)>`
+//!
+//! 解密失败时返回结构化错误，由上层根据原因决定是否提示用户。
+
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use rand::RngCore;
-use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
+use crate::key_derivation::{
+    derive_master_key_for_decrypt, derive_master_key_for_encrypt, MASTER_KEY_LEN,
+};
+use crate::key_storage::salt_path;
 use crate::AppData;
 
-const KEY_FILE_NAME: &str = ".tokennote.key";
+/// 当前密文前缀。带版本号以便未来升级算法时无痛迁移。
+const CIPHER_PREFIX_V2: &str = "ENC:v2:";
 
-fn key_path(app_dir: &PathBuf) -> PathBuf {
-    app_dir.join(KEY_FILE_NAME)
+/// 解密阶段可能的失败原因。
+#[allow(dead_code)]
+pub enum DecryptError {
+    /// 缺少 salt 文件，但密文存在。通常意味着 app_dir 来自其它机器。
+    MissingSalt,
+    /// 机器码读取失败或为空。
+    MachineId(String),
+    /// 派生密钥不匹配（最常见：换了机器或 salt 文件损坏）。
+    KeyMismatch(String),
+    /// 密文结构损坏（base64 失败、长度不足等）。
+    CorruptCipher(String),
+    /// 其它不可恢复错误。
+    Other(String),
 }
 
-fn read_file_key(app_dir: &PathBuf) -> Result<Option<[u8; 32]>, String> {
-    let key_path = key_path(app_dir);
-    if !key_path.exists() {
-        return Ok(None);
+impl DecryptError {
+    pub fn user_message(&self) -> String {
+        match self {
+            DecryptError::MissingSalt => {
+                "本地凭据无法解密：缺少与本机匹配的密钥派生材料，可能是数据来自其它设备。".to_string()
+            }
+            DecryptError::MachineId(detail) => {
+                format!("本地凭据无法解密：读取机器码失败（{detail}）。")
+            }
+            DecryptError::KeyMismatch(_) => {
+                "本地凭据无法解密：当前机器的指纹与加密时不一致，可能是更换了机器或重装了系统。"
+                    .to_string()
+            }
+            DecryptError::CorruptCipher(detail) => {
+                format!("本地凭据无法解密：密文已损坏（{detail}）。")
+            }
+            DecryptError::Other(detail) => format!("本地凭据无法解密：{detail}"),
+        }
     }
-
-    let key_data = fs::read(&key_path).map_err(|e| format!("读取密钥文件失败: {}", e))?;
-    if key_data.len() != 32 {
-        return Err(format!(
-            "密钥文件 `{}` 已损坏（期望 32 字节，实际 {} 字节），无法继续使用。",
-            key_path.display(),
-            key_data.len()
-        ));
-    }
-
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&key_data);
-    Ok(Some(key))
 }
 
-fn persist_file_key(app_dir: &PathBuf, key: &[u8; 32]) -> Result<(), String> {
-    let key_path = key_path(app_dir);
-    if let Some(parent) = key_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("创建密钥目录失败: {}", error))?;
-    }
-    fs::write(&key_path, key).map_err(|error| format!("保存密钥文件失败: {}", error))
-}
-
-fn create_encryption_key() -> Result<[u8; 32], String> {
-    let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
-    Ok(key)
-}
-
-fn get_or_create_encryption_key(app_dir: &PathBuf) -> Result<[u8; 32], String> {
-    if let Some(key) = read_file_key(app_dir)? {
-        return Ok(key);
-    }
-    let key = create_encryption_key()?;
-    persist_file_key(app_dir, &key)?;
-    Ok(key)
-}
-
-fn read_existing_encryption_key(app_dir: &PathBuf) -> Result<Option<[u8; 32]>, String> {
-    read_file_key(app_dir)
-}
-
-fn encrypt(data: &str, key: &[u8; 32]) -> Result<String, String> {
-    if data.is_empty() {
+fn encrypt_field(plain: &str, key: &[u8; MASTER_KEY_LEN]) -> Result<String, String> {
+    if plain.is_empty() {
         return Ok(String::new());
     }
     let cipher = Aes256Gcm::new(key.into());
@@ -72,23 +69,32 @@ fn encrypt(data: &str, key: &[u8; 32]) -> Result<String, String> {
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
-        .encrypt(nonce, data.as_bytes())
+        .encrypt(nonce, plain.as_bytes())
         .map_err(|error| format!("AES-GCM 加密失败: {}", error))?;
-    let mut combined = nonce_bytes.to_vec();
+
+    let mut combined = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
+    combined.extend_from_slice(&nonce_bytes);
     combined.extend_from_slice(&ciphertext);
-    Ok(format!("ENC:{}", BASE64.encode(combined)))
+    Ok(format!("{}{}", CIPHER_PREFIX_V2, BASE64.encode(combined)))
 }
 
-fn decrypt(encrypted: &str, key: &[u8; 32]) -> Result<String, String> {
-    if !encrypted.starts_with("ENC:") {
-        return Ok(encrypted.to_string());
+fn decrypt_field(value: &str, key: &[u8; MASTER_KEY_LEN]) -> Result<String, DecryptError> {
+    if value.is_empty() {
+        return Ok(String::new());
     }
-    let payload = &encrypted[4..];
+    // 明文（旧记录或全新字段）直接透传。
+    let payload = match value.strip_prefix(CIPHER_PREFIX_V2) {
+        Some(rest) => rest,
+        None => return Ok(value.to_string()),
+    };
+
     let combined = BASE64
         .decode(payload)
-        .map_err(|error| format!("Base64 解码失败: {}", error))?;
-    if combined.len() < 12 {
-        return Err("密文长度不足，无法提取随机 nonce".to_string());
+        .map_err(|error| DecryptError::CorruptCipher(format!("Base64 解码失败: {}", error)))?;
+    if combined.len() < 12 + 16 {
+        return Err(DecryptError::CorruptCipher(
+            "密文长度不足，无法提取 nonce 与 tag".to_string(),
+        ));
     }
 
     let nonce = Nonce::from_slice(&combined[..12]);
@@ -97,8 +103,9 @@ fn decrypt(encrypted: &str, key: &[u8; 32]) -> Result<String, String> {
 
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
-        .map_err(|error| format!("AES-GCM 解密失败: {}", error))?;
-    String::from_utf8(plaintext).map_err(|error| format!("UTF-8 解码失败: {}", error))
+        .map_err(|error| DecryptError::KeyMismatch(format!("AES-GCM 解密失败: {}", error)))?;
+    String::from_utf8(plaintext)
+        .map_err(|error| DecryptError::CorruptCipher(format!("UTF-8 解码失败: {}", error)))
 }
 
 fn has_encrypted_fields(data: &AppData) -> bool {
@@ -110,50 +117,49 @@ fn has_encrypted_fields(data: &AppData) -> bool {
             station.login_password.as_str(),
         ]
         .iter()
-        .any(|value| value.starts_with("ENC:"))
+        .any(|value| value.starts_with(CIPHER_PREFIX_V2))
     })
 }
 
-pub fn encrypt_data(data: &mut AppData, app_dir: &PathBuf) -> Result<(), String> {
-    let key = get_or_create_encryption_key(app_dir)?;
+/// 加密站点的敏感字段并落到 `data` 上。
+pub fn encrypt_data(data: &mut AppData, app_dir: &Path) -> Result<(), String> {
+    let key = derive_master_key_for_encrypt(app_dir)?;
     for station in &mut data.stations {
-        station.cookie =
-            encrypt(&station.cookie, &key).map_err(|error| format!("Cookie 加密失败: {error}"))?;
-        station.new_api_user = encrypt(&station.new_api_user, &key)
+        station.cookie = encrypt_field(&station.cookie, &key)
+            .map_err(|error| format!("Cookie 加密失败: {error}"))?;
+        station.new_api_user = encrypt_field(&station.new_api_user, &key)
             .map_err(|error| format!("new_api_user 加密失败: {error}"))?;
-        station.login_username = encrypt(&station.login_username, &key)
+        station.login_username = encrypt_field(&station.login_username, &key)
             .map_err(|error| format!("登录账号加密失败: {error}"))?;
-        station.login_password = encrypt(&station.login_password, &key)
+        station.login_password = encrypt_field(&station.login_password, &key)
             .map_err(|error| format!("登录密码加密失败: {error}"))?;
     }
     Ok(())
 }
 
-pub fn decrypt_data(data: &mut AppData, app_dir: &PathBuf) -> Result<(), String> {
+/// 解密站点的敏感字段。返回 `Err(DecryptError)` 时由上层负责提示用户。
+pub fn decrypt_data(data: &mut AppData, app_dir: &Path) -> Result<(), DecryptError> {
     if !has_encrypted_fields(data) {
         return Ok(());
     }
 
-    let key = read_existing_encryption_key(app_dir)?.ok_or_else(|| {
-        format!(
-            "检测到已加密的本地凭据，但密钥文件 `{}` 不存在，无法解密。",
-            key_path(app_dir).display()
-        )
-    })?;
+    let key = match derive_master_key_for_decrypt(app_dir)
+        .map_err(DecryptError::MachineId)?
+    {
+        Some(key) => key,
+        None => {
+            // 配置文件里有密文，但本机找不到 salt：典型的“目录被搬到别的机器”。
+            // 顺带把缺失的 salt 路径附在日志里，方便排查。
+            let _ = salt_path(app_dir);
+            return Err(DecryptError::MissingSalt);
+        }
+    };
 
     for station in &mut data.stations {
-        station.cookie = decrypt(&station.cookie, &key).map_err(|error| {
-            format!("Cookie 解密失败，可能是密钥文件不匹配或数据已损坏: {error}")
-        })?;
-        station.new_api_user = decrypt(&station.new_api_user, &key).map_err(|error| {
-            format!("new_api_user 解密失败，可能是密钥文件不匹配或数据已损坏: {error}")
-        })?;
-        station.login_username = decrypt(&station.login_username, &key).map_err(|error| {
-            format!("登录账号解密失败，可能是密钥文件不匹配或数据已损坏: {error}")
-        })?;
-        station.login_password = decrypt(&station.login_password, &key).map_err(|error| {
-            format!("登录密码解密失败，可能是密钥文件不匹配或数据已损坏: {error}")
-        })?;
+        station.cookie = decrypt_field(&station.cookie, &key)?;
+        station.new_api_user = decrypt_field(&station.new_api_user, &key)?;
+        station.login_username = decrypt_field(&station.login_username, &key)?;
+        station.login_password = decrypt_field(&station.login_password, &key)?;
     }
     Ok(())
 }

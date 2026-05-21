@@ -205,7 +205,7 @@ fn main_window_is_visible(app: &AppHandle) -> bool {
 
 #[cfg(target_os = "macos")]
 fn should_keep_macos_dock_visible(app: &AppHandle) -> bool {
-    ["main", "update", "low-balance-alert"]
+    ["main", "update", "low-balance-alert", "security-notice"]
         .iter()
         .any(|label| window_is_visible(app, label))
 }
@@ -326,13 +326,25 @@ pub(crate) fn minimize_main_window_internal(app: &AppHandle) -> Result<(), Strin
 pub(crate) fn show_main_window_internal(app: &AppHandle) -> Result<(), String> {
     ensure_macos_app_icon()?;
     set_macos_dock_visible(true)?;
-    activate_macos_app()?;
     if let Some(window) = app.get_webview_window("main") {
+        // 仅在窗口当前不可见时触发"重放入场动画"流程：
+        // 1) 先 emit 事件，让前端重挂载动画容器、回到 0% 帧；
+        // 2) 短暂等待让 React commit 完成；
+        // 3) 再让窗口可见。
+        // 这样能避免出现"先看到完成态再闪回初始态"的视觉抖动。
+        let was_hidden = !window.is_visible().unwrap_or(true);
+        if was_hidden {
+            let _ = window.emit("main-window-shown", ());
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+        activate_macos_app()?;
         let _ = window.show();
         let _ = window.unminimize();
         let _ = restore_macos_window(&window);
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
+    } else {
+        activate_macos_app()?;
     }
     Ok(())
 }
@@ -382,6 +394,29 @@ pub(crate) fn show_low_balance_alert_window_internal(
 
 pub(crate) fn hide_low_balance_alert_window_internal(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("low-balance-alert") {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    if !should_keep_macos_dock_visible(app) {
+        set_macos_dock_visible(false)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn show_security_notice_window_internal(app: &AppHandle) -> Result<(), String> {
+    ensure_macos_app_icon()?;
+    set_macos_dock_visible(true)?;
+    if let Some(window) = app.get_webview_window("security-notice") {
+        let _ = window.unminimize();
+        let _ = window.center();
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn hide_security_notice_window_internal(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("security-notice") {
         window.hide().map_err(|error| error.to_string())?;
     }
     #[cfg(target_os = "macos")]

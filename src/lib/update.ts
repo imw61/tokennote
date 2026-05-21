@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import { getVersion } from '@tauri-apps/api/app'
+import { invoke } from '@tauri-apps/api/core'
 import { validateExternalUrl } from './safe-external-url'
 
 export type UpdateManifest = {
@@ -122,10 +123,21 @@ export function compareVersions(left: string, right: string) {
   return 0
 }
 
-function appendManifestRequestMetadata(manifestUrl: string, currentVersion: string) {
+async function resolveMachineUuid(): Promise<string> {
+  try {
+    return await invoke<string>('get_machine_uuid')
+  } catch {
+    return ''
+  }
+}
+
+function appendManifestRequestMetadata(manifestUrl: string, currentVersion: string, machineUuid: string) {
   const url = new URL(manifestUrl)
   url.searchParams.set('clientVersion', currentVersion)
   url.searchParams.set('source', 'desktop')
+  if (machineUuid) {
+    url.searchParams.set('machineUuid', machineUuid)
+  }
   return url.toString()
 }
 
@@ -147,7 +159,8 @@ export function getUpdateDownloadLinks(manifest: UpdateManifest): UpdateLink[] {
 export async function checkForUpdates(signal?: AbortSignal): Promise<UpdateCheckResult> {
   const currentVersion = await resolveCurrentVersion()
   const manifestUrl = updateManifestUrl
-  const requestUrl = appendManifestRequestMetadata(manifestUrl, currentVersion)
+  const machineUuidValue = await resolveMachineUuid()
+  const requestUrl = appendManifestRequestMetadata(manifestUrl, currentVersion, machineUuidValue)
 
   try {
     const response = await fetch(requestUrl, {
@@ -156,7 +169,8 @@ export async function checkForUpdates(signal?: AbortSignal): Promise<UpdateCheck
       headers: {
         accept: 'application/json',
         'x-tokennote-version': currentVersion,
-        'x-tokennote-source': 'desktop'
+        'x-tokennote-source': 'desktop',
+        ...(machineUuidValue ? { 'x-tokennote-machine-uuid': machineUuidValue } : {})
       },
       signal
     })

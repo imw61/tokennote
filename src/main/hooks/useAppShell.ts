@@ -1,4 +1,5 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import { useAppData } from './useAppData'
 import { useConfigTransfer } from './useConfigTransfer'
 import { useFormLayerProps } from './useFormLayerProps'
@@ -82,7 +83,21 @@ export function useAppShell() {
     stationForm
   })
 
+  // 入场动画重放：从悬浮窗、托盘等位置再次唤起主窗口时，重新播放主页面入场动画。
+  // 后端 `show_main_window_internal` 在显示主窗口后会向本窗口 emit `main-window-shown`，
+  // 这里通过递增 key 触发 React 对动画容器的重挂载来重放动画。
+  const [entranceKey, setEntranceKey] = useState(0)
+  useEffect(() => {
+    const unlistenPromise = listen('main-window-shown', () => {
+      setEntranceKey(value => value + 1)
+    })
+    return () => {
+      void unlistenPromise.then(unlisten => unlisten()).catch(() => {})
+    }
+  }, [])
+
   return {
+    entranceKey,
     contentKey: view.contentKey,
     contentAnimationClass: view.contentAnimationClass,
     headerProps,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TokenNote",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "identifier": "com.tokennote.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -69,6 +69,25 @@
         "url": "/windows/update.html"
       },
       {
+        "label": "security-notice",
+        "title": "TokenNote · 数据安全提示",
+        "width": 400,
+        "height": 300,
+        "minWidth": 400,
+        "minHeight": 300,
+        "maxWidth": 400,
+        "maxHeight": 600,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "center": true,
+        "url": "/windows/security-notice.html"
+      },
+      {
         "label": "low-balance-alert",
         "title": "TokenNote · 低余额提醒",
         "width": 360,
@@ -89,7 +108,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' asset: http://asset.localhost https://asset.localhost; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: blob: http: https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost ws: wss: http: https:; media-src 'self' asset: data: blob:; frame-src 'self' http: https:;",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: blob: https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost https://platform.deepseek.com https://chat.deepseek.com https://api.deepseek.com; media-src 'self' asset: data: blob:; frame-src 'self' https:;",
       "capabilities": ["default"]
     },
     "macOSPrivateApi": true

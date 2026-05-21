@@ -22,6 +22,7 @@ export default defineConfig({
         widget: resolve(__dirname, 'windows/widget.html'),
         update: resolve(__dirname, 'windows/update.html'),
         lowBalanceAlert: resolve(__dirname, 'windows/low-balance-alert.html'),
+        securityNotice: resolve(__dirname, 'windows/security-notice.html'),
       },
     },
   },
