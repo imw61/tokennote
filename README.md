@@ -159,6 +159,12 @@ xattr -dr com.apple.quarantine /Applications/TokenNote.app
 
 ---
 
+## 🔗 友情链接
+
+- [LINUX DO](https://linux.do/)
+
+---
+
 ## 📄 License
 
 本项目采用 **PolyForm Noncommercial License 1.0.0** 发布，**禁止任何商业用途**。详见 [LICENSE](LICENSE)。
