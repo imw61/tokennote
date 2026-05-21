@@ -1,9 +1,10 @@
 [package]
 name = "tokennote"
-version = "0.2.1"
+version = "0.3.2"
 description = "Token relay balance monitor"
 authors = ["TokenNote"]
 edition = "2021"
+license = "PolyForm-Noncommercial-1.0.0"
 
 [lib]
 name = "tokennote_lib"
@@ -26,8 +27,12 @@ uuid = { version = "1.18", features = ["v4", "serde"] }
 aes-gcm = "0.10"
 base64 = "0.22"
 rand = "0.8"
+pbkdf2 = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
 tauri-plugin-dialog = "2.3.0"
 tauri-plugin-fs = "2.4.0"
+machine-uid = "0.6"
 tauri-plugin-single-instance = "2.3.7"
 
 [target.'cfg(target_os = "macos")'.dependencies]
