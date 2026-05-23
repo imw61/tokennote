@@ -28,6 +28,9 @@ mod secure_storage;
 mod security;
 mod source_label;
 mod update_check;
+// android_summary 仅供安卓 target 使用，且 `src/android_summary.rs` 已被 .gitignore 排除，
+// 公开仓库桌面端构建时不存在该文件，必须用 cfg 守卫，否则 `mod` 会找不到源文件。
+#[cfg(target_os = "android")]
 mod android_summary;
 mod currency;
 

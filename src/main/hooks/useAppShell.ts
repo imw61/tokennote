@@ -1,19 +1,87 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { isAndroid } from '../../lib/platform'
-import {
-  pushAndroidLowBalanceNotification,
-  setAndroidBackgroundRefresh,
-  updateAndroidPersistentNotification,
-  updateAndroidWidgets,
-  type AndroidWidgetPayload,
-  type AndroidWidgetStation,
-  type AndroidWidgetStatus
-} from '../../lib/android-bridge'
 import type { LowBalanceAlertPayload } from '../../lib/low-balance-alert'
 import { useAppData } from './useAppData'
-import { useAndroidBackGesture } from './useAndroidBackGesture'
 import { useConfigTransfer } from './useConfigTransfer'
+
+// ---- Android 专属模块类型（内联定义，避免依赖 gitignore 排除的文件） ----
+type AndroidWidgetStatus = 'ok' | 'low' | 'error' | 'pending'
+type AndroidWidgetStation = {
+  id: string
+  name: string
+  currencySymbol: string
+  balance: number | null
+  status: AndroidWidgetStatus
+}
+type AndroidWidgetCurrencyTotal = { currencySymbol: string; totalBalance: number }
+type AndroidWidgetSummary = { totalStations: number; totalRequests: number; errorCount: number; lowBalanceCount: number }
+type AndroidWidgetPayload = {
+  stations: AndroidWidgetStation[]
+  currencyTotals: AndroidWidgetCurrencyTotal[]
+  summary: AndroidWidgetSummary
+  lastUpdatedLabel: string
+}
+
+/**
+ * 动态加载 android-bridge 模块。
+ * 桌面端构建时该文件不存在（被 .gitignore 排除），所以不能用静态 import；
+ * 仅在 isAndroid() 为 true 时才会实际调用，桌面端永远不会触发。
+ *
+ * 注意：这里把模块入参类型写为 `any`，避免 TypeScript 在桌面端构建时
+ * 因找不到 `../../lib/android-bridge` 文件而报 TS2307。运行时的安全性
+ * 由 `isAndroid()` 守卫与 try/catch 兜底保证。
+ */
+async function callAndroidBridge<T>(
+  fn: (mod: any) => Promise<T>
+): Promise<T | undefined> {
+  try {
+    // 用变量隔开模块路径，避开 TS 在编译期对 dynamic import 字面量做模块解析
+    const modulePath = '../../lib/android-bridge'
+    const mod = await import(/* @vite-ignore */ modulePath)
+    return await fn(mod)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * useAndroidBackGesture 的内联 no-op 版本。
+ * 真实实现在 ./useAndroidBackGesture.ts（被 .gitignore 排除），
+ * 但其核心逻辑仅在 isAndroid() 时生效，桌面端直接跳过。
+ * 这里内联一个等效的"仅安卓生效"版本，避免静态导入缺失文件。
+ */
+function useAndroidBackGesture(handleBack: () => boolean) {
+  const handleBackRef = useRef(handleBack)
+  handleBackRef.current = handleBack
+
+  useEffect(() => {
+    if (!isAndroid()) return
+    if (typeof window === 'undefined') return
+
+    const STATE_TAG = '__tokennote_back_guard__'
+    window.history.pushState({ tag: STATE_TAG }, '')
+
+    const onPopState = async () => {
+      const consumed = handleBackRef.current()
+      if (consumed) {
+        window.history.pushState({ tag: STATE_TAG }, '')
+        return
+      }
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        await invoke('request_app_exit')
+      } catch (error) {
+        console.error('[useAndroidBackGesture] request_app_exit failed', error)
+      }
+    }
+
+    window.addEventListener('popstate', onPopState)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+    }
+  }, [])
+}
 import { useFormLayerProps } from './useFormLayerProps'
 import { useHeaderProps } from './useHeaderProps'
 import { useMainViewState } from './useMainViewState'
@@ -161,7 +229,7 @@ export function useAppShell() {
     const enabled = data.settings.androidBackgroundRefreshEnabled !== false
     if (previousBackgroundEnabledRef.current === enabled) return
     previousBackgroundEnabledRef.current = enabled
-    void setAndroidBackgroundRefresh(enabled)
+    void callAndroidBridge(mod => mod.setAndroidBackgroundRefresh(enabled))
   }, [data.settings.androidBackgroundRefreshEnabled])
 
   // Android 常驻通知：每次 snapshots / 站点列表更新时，把"前 N 个站点 + 余额"投递到通知。
@@ -173,7 +241,7 @@ export function useAppShell() {
     const stations = data.stations.filter(item => item.enabled)
     const total = stations.length
     if (total === 0) {
-      void updateAndroidPersistentNotification('TokenNote', '尚未添加任何站点')
+      void callAndroidBridge(mod => mod.updateAndroidPersistentNotification('TokenNote', '尚未添加任何站点'))
       return
     }
     const summaries = stations.slice(0, 4).map(station => {
@@ -188,10 +256,10 @@ export function useAppShell() {
     })
     const ellipsis = total > summaries.length ? ' ...' : ''
     const summaryText = `${summaries.join('  ')}${ellipsis}`
-    void updateAndroidPersistentNotification(
+    void callAndroidBridge(mod => mod.updateAndroidPersistentNotification(
       `TokenNote 正在监控（${total} 个站点）`,
       summaryText
-    )
+    ))
   }, [data.settings.androidBackgroundRefreshEnabled, data.stations, snapshots])
 
   // Android 桌面小组件：和常驻通知共用一份数据源，把当前快照推送给 WidgetBridge。
@@ -272,7 +340,7 @@ export function useAppShell() {
       },
       lastUpdatedLabel
     }
-    void updateAndroidWidgets(payload)
+    void callAndroidBridge(mod => mod.updateAndroidWidgets(payload))
   }, [data.stations, snapshots])
 
   // Android 低余额通知：监听后端 emit 出来的 alert payload，转发到系统通知。
@@ -289,10 +357,10 @@ export function useAppShell() {
       const more = payload.totalCount > visible.length
         ? `（还有 ${payload.totalCount - visible.length} 个）`
         : ''
-      void pushAndroidLowBalanceNotification(
+      void callAndroidBridge(mod => mod.pushAndroidLowBalanceNotification(
         `${payload.totalCount} 个站点余额不足`,
         `${lines.join('；')}${more}`
-      )
+      ))
     })
     return () => {
       void unlistenPromise.then(unlisten => unlisten()).catch(() => {})
