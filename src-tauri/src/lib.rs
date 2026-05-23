@@ -16,6 +16,8 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 mod data;
+mod device_id;
+mod console_scripts;
 mod force_reminder;
 mod key_derivation;
 mod key_storage;
@@ -24,8 +26,26 @@ mod providers;
 mod refresh;
 mod secure_storage;
 mod security;
+mod source_label;
 mod update_check;
+mod android_summary;
+mod currency;
+
+// 桌面端窗口管理：托盘、悬浮窗、多窗口、macOS dock 控制等。
+// Android 上 Tauri 不提供 `set_always_on_top` / `minimize` 等 API，使用 `windowing_android` 桩模块替代，
+// 通过 `pub(crate) use ... as windowing` 在 Android target 下保持上层调用入口一致。
+#[cfg(not(target_os = "android"))]
 mod windowing;
+
+#[cfg(target_os = "android")]
+mod windowing_android;
+#[cfg(target_os = "android")]
+use windowing_android as windowing;
+
+// 安卓 JNI 桥接（前台 Service / 通知 / Android ID）。
+// 模块所在目录 `src-tauri/src/android/` 已被 `.gitignore` 排除，不进入公开仓库。
+#[cfg(target_os = "android")]
+mod android;
 
 pub use data::{endpoint, fetch_json, normalize_bearer_token, normalize_url, now_ts};
 pub use models::{
@@ -53,12 +73,14 @@ use windowing::{
     deepseek_console_script, external_link_guard_script,
     hide_force_reminder_window_internal,
     hide_low_balance_alert_window_internal, hide_main_window_internal,
-    hide_security_notice_window_internal, hide_update_window_internal, load_tray_icon,
+    hide_security_notice_window_internal, hide_update_window_internal,
     minimize_main_window_internal, newapi_console_script, open_console_webview,
     show_force_reminder_window_internal, show_main_window_internal,
     show_security_notice_window_internal, show_update_window_internal, station_console_label,
     sub2api_console_script,
 };
+#[cfg(not(target_os = "android"))]
+use windowing::load_tray_icon;
 #[cfg(target_os = "macos")]
 use windowing::{clear_ns_window_background, ensure_macos_app_icon, sync_macos_dock_visibility};
 
@@ -101,6 +123,33 @@ async fn show_startup_force_reminder(app_handle: &AppHandle) {
 
     let state = app_handle.state::<AppState>();
     *state.force_reminder_payload.lock().await = Some(payload.clone());
+
+    // Android：强制提醒在应用内弹层之外，再发一条系统通知，
+    // 保证 App 退后台 / 杀掉重开后用户也能看到提醒。
+    // 桌面端继续走独立窗口，本块没有副作用。
+    #[cfg(target_os = "android")]
+    {
+        let android_enabled = {
+            let state = app_handle.state::<AppState>();
+            let data = state.data.lock().await;
+            data.settings.android_force_reminder_notification_enabled
+        };
+        if android_enabled {
+            let title = match payload.r#type.as_str() {
+                "warning" => "TokenNote · 提醒",
+                "danger" => "TokenNote · 重要提醒",
+                _ => "TokenNote · 启动提醒",
+            };
+            let body = if payload.content.chars().count() > 120 {
+                let truncated: String = payload.content.chars().take(120).collect();
+                format!("{}…", truncated)
+            } else {
+                payload.content.clone()
+            };
+            let _ = android::push_force_reminder_notification(title, &body);
+        }
+    }
+
     let _ = show_force_reminder_window_on_main_thread(app_handle, payload);
 }
 
@@ -181,16 +230,49 @@ async fn run_startup_window_sequence(app_handle: AppHandle, security_notice_ackn
     show_startup_force_reminder(&app_handle).await;
 }
 
-#[tauri::command]
-async fn get_app_data(state: State<'_, AppState>) -> Result<AppData, String> {
-    Ok(state.data.lock().await.clone())
+/// 命令名称：等待 AppState 就绪
+/// 请求地址：仅供本文件内 `get_app_data` / `get_persistence_notice` 复用，不暴露给前端
+/// 主要功能：在 `app.manage(AppState)` 完成之前，IPC 命令调用方可能比 setup 闭包跑得更早，
+///           Tauri 默认会以 "state not managed" 直接 reject。这里做最多 ~3s 的短轮询，
+///           直到 state 注册完成再返回，避免前端为此丢弃首屏数据。
+/// 权限范围：内部 helper，无前端暴露
+async fn wait_for_app_state(app: &AppHandle) -> Result<State<'_, AppState>, String> {
+    // 安卓端 setup 闭包与 webview JS 是并发运行的：webview 起来后立刻 `invoke('get_app_data')`，
+    // 此时 setup 还在 `load_data` / 解密 / 备份恢复，state 尚未 manage。把"早到的 invoke"
+    // 等到 setup 完成是最简单也最稳的办法，不需要给前端再设计重试节奏。
+    const MAX_ATTEMPTS: u32 = 60;
+    const SLEEP_MS: u64 = 50;
+    for _ in 0..MAX_ATTEMPTS {
+        if let Some(state) = app.try_state::<AppState>() {
+            return Ok(state);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(SLEEP_MS)).await;
+    }
+    Err("应用尚未完成初始化，请稍后再试".to_string())
 }
 
+/// 命令名称：获取应用数据
+/// 请求地址：tauri invoke `get_app_data`
+/// 主要功能：返回当前内存中的 `AppData`（站点、设置、快照、本地评测等）
+/// 权限范围：本地前端调用，无网络暴露
 #[tauri::command]
-async fn get_persistence_notice(
-    state: State<'_, AppState>,
-) -> Result<Option<PersistenceNotice>, String> {
-    Ok(state.persistence_notice.lock().await.clone())
+async fn get_app_data(app: AppHandle) -> Result<AppData, String> {
+    let state = wait_for_app_state(&app).await?;
+    // 显式把克隆值落在 local 变量上，让 `MutexGuard` 与 `State` 借用都在 return 前先 drop，
+    // 避免临时借用在 `Ok(...)` 末尾还活着、与函数返回的生命周期冲突。
+    let data = state.data.lock().await.clone();
+    Ok(data)
+}
+
+/// 命令名称：获取持久化告警
+/// 请求地址：tauri invoke `get_persistence_notice`
+/// 主要功能：返回最近一次 `load_data` 留下的告警（解密失败 / 备份恢复 等）
+/// 权限范围：本地前端调用，无网络暴露
+#[tauri::command]
+async fn get_persistence_notice(app: AppHandle) -> Result<Option<PersistenceNotice>, String> {
+    let state = wait_for_app_state(&app).await?;
+    let notice = state.persistence_notice.lock().await.clone();
+    Ok(notice)
 }
 
 fn sync_auto_launch(app: &AppHandle, enabled: bool) -> Result<(), String> {
@@ -206,6 +288,9 @@ fn sync_auto_launch(app: &AppHandle, enabled: bool) -> Result<(), String> {
             }
         }
     }
+    // Linux 与 Android 端没有挂接开机自启，参数显式消费一下避免未使用告警。
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = (app, enabled);
 
     Ok(())
 }
@@ -291,7 +376,7 @@ async fn detect_station_type_cloud(base_url: &str) -> Option<DetectStationTypeRe
         .build()
         .ok()?;
 
-    let machine_uuid = machine_uid::get().unwrap_or_default();
+    let machine_uuid = device_id::machine_id_or_default();
     let current_version = env!("CARGO_PKG_VERSION");
 
     #[derive(serde::Deserialize)]
@@ -314,7 +399,7 @@ async fn detect_station_type_cloud(base_url: &str) -> Option<DetectStationTypeRe
         .json(&serde_json::json!({
             "baseUrl": base_url,
             "clientVersion": current_version,
-            "source": "desktop",
+            "source": source_label::source_label(),
             "machineUuid": machine_uuid
         }))
         .send()
@@ -929,6 +1014,18 @@ async fn hide_main_window(app: AppHandle) -> Result<(), String> {
     hide_main_window_internal(&app)
 }
 
+/// 命令名称：请求退出应用
+/// 请求地址：tauri invoke `request_app_exit`
+/// 主要功能：让前端在响应安卓系统返回手势时，能从顶层把 Activity finish 掉，避免出现"按一次没反应"的体感。
+/// 权限范围：本地前端调用，无网络暴露
+#[tauri::command]
+async fn request_app_exit(app: AppHandle) -> Result<(), String> {
+    // 桌面端（macOS / Windows）通常由托盘菜单或窗口关闭按钮收尾；移动端则直接 exit(0)
+    // 让 Activity 与前台 Service 一起结束。这里不做平台分支：桌面端默认前端不会调到这个命令。
+    app.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 async fn show_update_window(app: AppHandle, payload: UpdateWindowPayload) -> Result<(), String> {
     set_active_update_window_payload(&app, Some(payload.clone())).await;
@@ -1059,9 +1156,74 @@ async fn acknowledge_force_reminder(
 
 #[tauri::command]
 async fn get_machine_uuid() -> String {
-    machine_uid::get().unwrap_or_default()
+    device_id::machine_id_or_default()
 }
 
+/// 启动 / 停止 Android 前台 Service。
+/// 桌面端无对应概念，统一返回成功，方便前端不必为不同平台分支。
+#[tauri::command]
+async fn set_android_background_refresh(enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        if enabled {
+            android::start_refresh_service()?;
+        } else {
+            android::stop_refresh_service()?;
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = enabled;
+    Ok(())
+}
+
+/// 更新 Android 常驻通知。Rust 共享逻辑刷新成功后由前端转发调用。
+/// 桌面端 no-op，避免前端做多平台分支。
+#[tauri::command]
+async fn update_android_persistent_notification(
+    title: String,
+    summary: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        android::update_persistent_notification(&title, &summary)?;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (title, summary);
+    Ok(())
+}
+
+/// 推送一条低余额通知。前端在 alert payload 出现时调用。
+#[tauri::command]
+async fn push_android_low_balance_notification(
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        android::push_low_balance_notification(&title, &body)?;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (title, body);
+    Ok(())
+}
+
+/// 把最新的小组件数据推送给 Android 桌面小组件。
+/// 数据结构由前端按 `WidgetData` JSON 拼好（`stations` / `currencyTotals` / `summary` / `lastUpdatedLabel`）。
+/// 桌面端 no-op，避免前端做平台分支。
+#[tauri::command]
+async fn update_android_widgets(payload: serde_json::Value) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let json = serde_json::to_string(&payload)
+            .map_err(|error| format!("序列化小组件数据失败: {}", error))?;
+        android::update_widgets_with_json(&json)?;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = payload;
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn snap_to_edge(app: AppHandle, auto_hide: Option<bool>) -> Result<(), String> {
     let window = app
@@ -1151,8 +1313,28 @@ async fn snap_to_edge(app: AppHandle, auto_hide: Option<bool>) -> Result<(), Str
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn snap_to_edge(_app: AppHandle, _auto_hide: Option<bool>) -> Result<(), String> {
+    // Android 端没有悬浮窗，贴边动作直接 no-op，让前端继续保留按钮也不报错。
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Android：把 panic message 通过 stderr 抛出，让 logcat 的 `RustStdoutStderr`
+    // 能拿到具体内容。tao 的 ndk_glue 在 Activity 创建时若 panic，原本只能看到 native abort
+    // 堆栈，看不到 Rust 侧 message，这里手动打印一份。
+    #[cfg(target_os = "android")]
+    {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("[tokennote panic] {}", info);
+            if let Ok(true) = std::env::var("RUST_BACKTRACE").map(|v| v == "1" || v == "full") {
+                eprintln!("{}", std::backtrace::Backtrace::force_capture());
+            }
+        }));
+    }
+
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -1191,12 +1373,37 @@ pub fn run() {
             if load_result.should_persist || history_trimmed {
                 let _ = persist_data(&data_path, &loaded_app_data);
             }
+
+            // 这里在把数据塞进 `Arc<Mutex<>>` 之前先取出需要的字段，避免后续再锁。
+            // 注：使用 `tokio::sync::Mutex::blocking_lock()` 在 Tauri 2 mobile 的 setup 里
+            // 会 panic（"Cannot block the current thread from within a runtime."），
+            // 桌面端因为 setup 不在 tokio 上下文中暂未触发；移动端启动会直接 abort。
+            let widget_enabled = loaded_app_data.settings.widget_enabled;
+            let security_notice_acknowledged = loaded_app_data.security_notice_acknowledged;
+            #[cfg(target_os = "android")]
+            let android_background_refresh_enabled =
+                loaded_app_data.settings.android_background_refresh_enabled;
+            let _ = apply_runtime_settings(app.handle(), &loaded_app_data.settings);
+
             let loaded_data = Arc::new(Mutex::new(loaded_app_data));
-            let current = loaded_data.blocking_lock();
-            let widget_enabled = current.settings.widget_enabled;
-            let security_notice_acknowledged = current.security_notice_acknowledged;
-            let _ = apply_runtime_settings(app.handle(), &current.settings);
-            drop(current);
+
+            // 必须在 webview 触发首个 IPC 之前完成 manage：
+            // 安卓端 setup 与 webview 创建是并发的，前端 React 挂载后会立刻调用
+            // `get_app_data`，如果在 manage 之前到达，Tauri 会以 "state not managed"
+            // 直接 reject，导致前端 stations 一直是空，必须等用户手动刷新（refresh_all）
+            // 才能看到站点。所以把 manage / start_scheduler 提到所有窗口显示与平台 UI
+            // 操作之前，让 invoke 命令在最早可能的时间就具备完整的 AppState。
+            app.manage(AppState {
+                data: loaded_data.clone(),
+                data_path: data_path.clone(),
+                persistence_notice: Arc::new(Mutex::new(load_result.warning)),
+                update_window_payload: Arc::new(Mutex::new(None)),
+                low_balance_alert_payload: Arc::new(Mutex::new(None)),
+                force_reminder_payload: Arc::new(Mutex::new(None)),
+                low_balance_alerted_station_ids: Arc::new(Mutex::new(HashSet::new())),
+            });
+            start_scheduler(app.handle().clone(), loaded_data, data_path);
+
             if !widget_enabled {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
@@ -1253,16 +1460,14 @@ pub fn run() {
                     .build(app)
                     .map_err(|error| error.to_string())?;
             }
-            app.manage(AppState {
-                data: loaded_data.clone(),
-                data_path: data_path.clone(),
-                persistence_notice: Arc::new(Mutex::new(load_result.warning)),
-                update_window_payload: Arc::new(Mutex::new(None)),
-                low_balance_alert_payload: Arc::new(Mutex::new(None)),
-                force_reminder_payload: Arc::new(Mutex::new(None)),
-                low_balance_alerted_station_ids: Arc::new(Mutex::new(HashSet::new())),
-            });
-            start_scheduler(app.handle().clone(), loaded_data, data_path);
+
+            // Android：根据用户上一次保存的"后台刷新"开关来决定是否启动前台 Service。
+            // 之前 Kotlin 在 MainActivity.onCreate 里无条件启动，会覆盖用户的关闭操作；
+            // 现在统一交给 Rust 在读完 settings 之后再调。
+            #[cfg(target_os = "android")]
+            if android_background_refresh_enabled {
+                let _ = android::start_refresh_service();
+            }
 
             let startup_app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -1290,6 +1495,7 @@ pub fn run() {
             set_always_on_top,
             show_main_window,
             hide_main_window,
+            request_app_exit,
             show_update_window,
             hide_update_window,
             get_update_window_payload,
@@ -1301,6 +1507,10 @@ pub fn run() {
             hide_force_reminder_window,
             acknowledge_force_reminder,
             get_machine_uuid,
+            set_android_background_refresh,
+            update_android_persistent_notification,
+            push_android_low_balance_notification,
+            update_android_widgets,
             snap_to_edge
         ])
         .run(tauri::generate_context!())

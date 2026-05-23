@@ -15,6 +15,7 @@ export function MainPanels({
   snapshots,
   totals,
   loading,
+  initialLoaded,
   updateCurrentVersionText,
   updateStatusText,
   primaryUpdateLink,
@@ -39,6 +40,8 @@ export function MainPanels({
   onCheckUpdate,
   onImportConfig,
   onExportConfig,
+  onExportConfigQr,
+  onImportConfigQr,
   onConfigTransferDialogChange,
   onConfigTransferDialogConfirm,
   onConfigTransferDialogCancel,
@@ -51,6 +54,7 @@ export function MainPanels({
   onAddStation,
   onOpenStation,
   onReorderStations,
+  onRefreshAll,
   onOpenPrimaryUpdateLink,
   onOpenFallbackUpdateLink,
   onReviewDraftChange,
@@ -81,6 +85,8 @@ export function MainPanels({
         onCheckUpdate={onCheckUpdate}
         onImportConfig={onImportConfig}
         onExportConfig={onExportConfig}
+        onExportConfigQr={onExportConfigQr}
+        onImportConfigQr={onImportConfigQr}
         onConfigTransferDialogChange={onConfigTransferDialogChange}
         onConfigTransferDialogConfirm={onConfigTransferDialogConfirm}
         onConfigTransferDialogCancel={onConfigTransferDialogCancel}
@@ -129,10 +135,12 @@ export function MainPanels({
       snapshots={snapshots}
       totals={totals}
       loading={loading}
+      initialLoaded={initialLoaded}
       onAddStation={onAddStation}
       onOpenStation={onOpenStation}
       onReorderStations={onReorderStations}
       onRefreshStation={onRefreshStation}
+      onRefreshAll={onRefreshAll}
     />
   )
 }

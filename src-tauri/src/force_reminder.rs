@@ -34,13 +34,13 @@ pub(crate) async fn fetch_active_force_reminder() -> Option<ForceReminderPayload
         .build()
         .ok()?;
 
-    let machine_uuid = machine_uid::get().unwrap_or_default();
+    let machine_uuid = crate::device_id::machine_id_or_default();
     let current_version = env!("CARGO_PKG_VERSION");
     let response = client
         .get("https://update.tokennote.dev/public/force-reminder")
         .query(&[
             ("clientVersion", current_version),
-            ("source", "desktop"),
+            ("source", crate::source_label::source_label()),
             ("machineUuid", machine_uuid.as_str()),
         ])
         .header("accept", "application/json")
@@ -84,7 +84,7 @@ pub(crate) async fn submit_force_reminder_read(updated_at: &str) {
         Err(_) => return,
     };
 
-    let machine_uuid = machine_uid::get().unwrap_or_default();
+    let machine_uuid = crate::device_id::machine_id_or_default();
     let current_version = env!("CARGO_PKG_VERSION");
     let _ = client
         .post("https://update.tokennote.dev/public/force-reminder-read")
@@ -92,12 +92,15 @@ pub(crate) async fn submit_force_reminder_read(updated_at: &str) {
         .json(&ForceReminderReadRequest {
             updated_at: trimmed_updated_at,
             client_version: current_version,
-            source: "desktop",
+            source: crate::source_label::source_label(),
             machine_uuid: machine_uuid.as_str(),
         })
         .send()
         .await;
 }
+
+/// 客户端来源标识统一从 `crate::source_label::source_label()` 取得,
+/// 该函数按 `target_os` 在编译期分发为 windows / macos / linux / android / ios。
 
 fn normalize_force_reminder_mode(value: Option<&str>) -> String {
     match value.unwrap_or("").trim() {

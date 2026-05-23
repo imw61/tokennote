@@ -10,7 +10,10 @@ export const defaultSettings: AppSettings = {
   opacity: 0.82,
   statsRangeHours: 25,
   defaultTime: 'hour',
-  refreshConcurrency: 3
+  refreshConcurrency: 3,
+  androidBackgroundRefreshEnabled: true,
+  androidLowBalanceNotificationEnabled: true,
+  androidForceReminderNotificationEnabled: true
 }
 
 export const emptyData: AppData = {

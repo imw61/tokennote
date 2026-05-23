@@ -29,6 +29,9 @@ export type AppSettings = {
   statsRangeHours: number
   defaultTime: string
   refreshConcurrency: number
+  androidBackgroundRefreshEnabled: boolean
+  androidLowBalanceNotificationEnabled: boolean
+  androidForceReminderNotificationEnabled: boolean
 }
 
 export type ModelUsageSummary = {

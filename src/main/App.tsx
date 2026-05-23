@@ -1,13 +1,28 @@
 import { useEffect, useRef } from 'react'
 import { MainHeader } from './components/MainHeader'
 import { MainPanels } from './components/MainPanels'
+import { MobileOverlays } from './components/MobileOverlays'
 import { StationFormLayer } from './components/StationFormLayer'
+import { ConfigQrExportDialog } from './components/ConfigQrExportDialog'
+import { ConfigQrImportDialog } from './components/ConfigQrImportDialog'
 import { useAppShell } from './hooks/useAppShell'
 
 const ENTRANCE_ANIMATION_CLASS = 'animate-main-entrance'
 
 export function App() {
-  const { entranceKey, contentKey, contentAnimationClass, headerProps, panelProps, formLayerProps } = useAppShell()
+  const {
+    entranceKey,
+    contentKey,
+    contentAnimationClass,
+    headerProps,
+    panelProps,
+    formLayerProps,
+    qrExportPlan,
+    qrImportOpen,
+    onCloseQrExport,
+    onCloseQrImport,
+    onQrPayloadAssembled
+  } = useAppShell()
   const entranceRef = useRef<HTMLDivElement>(null)
 
   // 重新唤起主窗口时，仅重启外层入场动画的 CSS 关键帧（移除类 → 触发 reflow → 重新加上类），
@@ -37,6 +52,20 @@ export function App() {
       </div>
 
       <StationFormLayer {...formLayerProps} />
+      <MobileOverlays />
+
+      {/* 配置二维码迁移对话框：电脑端展示 / 手机端扫描，二选一在屏幕中央叠层 */}
+      {qrExportPlan ? (
+        <ConfigQrExportDialog plan={qrExportPlan} onClose={onCloseQrExport} />
+      ) : null}
+      {qrImportOpen ? (
+        <ConfigQrImportDialog
+          onAssembled={payload => {
+            void onQrPayloadAssembled(payload)
+          }}
+          onClose={onCloseQrImport}
+        />
+      ) : null}
     </main>
   )
 }

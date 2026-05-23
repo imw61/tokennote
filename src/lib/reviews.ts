@@ -3,6 +3,7 @@
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { fetchWithTimeout } from './fetch-with-timeout'
+import { getSourceLabel } from './platform'
 import type { AppData } from '../main/types'
 
 export type StationReviewInput = {
@@ -83,7 +84,8 @@ export async function submitStationReview(input: StationReviewInput): Promise<St
       body: JSON.stringify({
         ...input,
         clientVersion: currentVersion,
-        source: 'desktop',
+        // source 上报具体平台:windows / macos / linux / android / ios。
+        source: getSourceLabel(),
         machineUuid
       }),
       timeoutMs: 8000,

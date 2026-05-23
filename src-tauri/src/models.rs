@@ -22,6 +22,18 @@ fn default_widget_auto_hide_enabled() -> bool {
     false
 }
 
+fn default_android_background_refresh_enabled() -> bool {
+    true
+}
+
+fn default_android_low_balance_notification_enabled() -> bool {
+    true
+}
+
+fn default_android_force_reminder_notification_enabled() -> bool {
+    true
+}
+
 pub(crate) fn normalize_refresh_concurrency(value: u64) -> usize {
     value.clamp(1, 10) as usize
 }
@@ -67,6 +79,16 @@ pub struct AppSettings {
     pub default_time: String,
     #[serde(default = "default_refresh_concurrency")]
     pub refresh_concurrency: u64,
+    /// Android 端"后台刷新"开关。桌面端不消费这个字段，但保留在共享配置中
+    /// 方便配置文件双向迁移；默认开启。
+    #[serde(default = "default_android_background_refresh_enabled")]
+    pub android_background_refresh_enabled: bool,
+    /// Android 端"低余额系统通知"开关，默认开启。桌面端不消费这个字段。
+    #[serde(default = "default_android_low_balance_notification_enabled")]
+    pub android_low_balance_notification_enabled: bool,
+    /// Android 端"强制提醒系统通知"开关，默认开启。桌面端不消费这个字段。
+    #[serde(default = "default_android_force_reminder_notification_enabled")]
+    pub android_force_reminder_notification_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -82,6 +104,11 @@ impl Default for AppSettings {
             stats_range_hours: 25,
             default_time: "hour".to_string(),
             refresh_concurrency: default_refresh_concurrency(),
+            android_background_refresh_enabled: default_android_background_refresh_enabled(),
+            android_low_balance_notification_enabled:
+                default_android_low_balance_notification_enabled(),
+            android_force_reminder_notification_enabled:
+                default_android_force_reminder_notification_enabled(),
         }
     }
 }

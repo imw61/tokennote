@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TokenNote",
-  "version": "0.3.5",
+  "version": "0.3.21",
   "identifier": "com.tokennote.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -127,7 +127,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: blob: https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost https://platform.deepseek.com https://chat.deepseek.com https://api.deepseek.com; media-src 'self' asset: data: blob:; frame-src 'self' https:;",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: blob: https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost https://update.tokennote.dev https://platform.deepseek.com https://chat.deepseek.com https://api.deepseek.com; media-src 'self' asset: data: blob:; frame-src 'self' https:;",
       "capabilities": ["default"]
     },
     "macOSPrivateApi": true

@@ -52,6 +52,12 @@ export type MainPanelsProps = {
   snapshots: Record<string, BalanceSnapshot>
   totals: OverviewTotals
   loading: boolean
+  /**
+   * 首次 `get_app_data` 是否已经返回。安卓冷启动 + IPC 第一次往返较慢，
+   * 在这之前 stations 还是初始空数组，必须靠这个标记把"还没有监控站点"的空态守住，
+   * 否则用户会看到一闪而过的"没有站点"导致以为配置丢失。
+   */
+  initialLoaded: boolean
   updateCurrentVersionText: string
   updateStatusText: string
   primaryUpdateLink: string
@@ -75,6 +81,10 @@ export type MainPanelsProps = {
   onCheckUpdate: () => void
   onImportConfig: () => void
   onExportConfig: () => void
+  /** 电脑端：把当前配置加密后展示为二维码 */
+  onExportConfigQr: () => void
+  /** 手机端：开启相机扫描电脑端展示的二维码 */
+  onImportConfigQr: () => void
   onConfigTransferDialogChange: (value: string) => void
   onConfigTransferDialogConfirm: () => void
   onConfigTransferDialogCancel: () => void
@@ -88,6 +98,11 @@ export type MainPanelsProps = {
   onAddStation: () => void
   onOpenStation: (id: string) => void
   onReorderStations: (draggedId: string, targetId: string) => Promise<void>
+  /**
+   * 安卓端首页下拉刷新触发的"全量刷新"。复用 header 上原有的 `refreshAll`，
+   * 桌面端目前未启用下拉手势，因此不会真正调用。
+   */
+  onRefreshAll: () => void
   onOpenPrimaryUpdateLink: () => void
   onOpenFallbackUpdateLink?: () => void
   onReviewDraftChange: (updater: (current: ReviewDraft) => ReviewDraft) => void

@@ -58,6 +58,77 @@ body.security-notice-page::-webkit-scrollbar {
   display: none;
 }
 
+/*
+ * 移动端 (Android) safe-area 适配
+ *
+ * Android Activity 通过 enableEdgeToEdge() 让内容延伸到状态栏与导航栏下方，
+ * 前端这里读取 viewport 提供的 env(safe-area-inset-*) 给主页面留出顶部 / 底部间距，
+ * 避免标题栏与系统状态栏重叠。.platform-android 类名由 platform.ts 在运行时挂载到 <html>。
+ *
+ * 状态栏区域显示的就是 `body` 背景：保持纯白，与主面板顶部颜色一致；状态栏文字 / 图标
+ * 颜色由 Activity 通过 SystemBarStyle.light 调整为深色。
+ *
+ * 高度策略：
+ * 早先把 safe-area padding 直接放在 body 上，但 main 默认 `min-h-screen`（100vh），叠加
+ * 之后 body 总高度 > viewport，导致"明明卡片不溢出却仍能上下拉一段橡皮筋"。改成：
+ *   - html / body 锁 100% 高度并禁止滚动；
+ *   - safe-area padding 移到 #root，作为内容容器；
+ *   - main 在 #root 内部按 100% 严格填满，不再用 min-h-screen 撑高度。
+ * 这样无论卡片多少，body 自身都不会出现滚动条。
+ */
+html.platform-android,
+html.platform-android body {
+  height: 100%;
+  overflow: hidden;
+}
+
+html.platform-android body {
+  background: #ffffff;
+}
+
+html.platform-android #root {
+  height: 100%;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+html.platform-android #root > main {
+  /* 覆盖 main 的 min-h-screen：让它严格按 #root 的可视高度填满，避免越过 safe-area。 */
+  min-height: 0;
+  height: 100%;
+}
+
+/*
+ * 桌面端 (Windows / macOS / Linux) viewport 锁定
+ *
+ * 主窗口里所有真正需要滚动的内容都已经由内部 panel 自己用 `overflow-y-auto + scrollbar-hide`
+ * 处理（详见 Overview / SettingsView / StationDetail / ReviewsView）。外层 main 仍然挂着
+ * `min-h-screen`，加上入场动画 `translateX(18px)` 会让内容在播放第一帧时溢出视口右侧 ~18px，
+ * 这就是桌面端偶尔出现"水平滚动条 / 内容能左右晃"和"右侧露出竖向滚动条"的根因。
+ *
+ * 解法跟安卓端对齐：把 html / body / #root 全部锁到 100% 高度并禁止溢出，让 main 严格
+ * 填满 #root 的可视区域。任何子组件的入场偏移都会被外层 hidden 裁掉，不再渗透到窗口边缘。
+ */
+html.platform-desktop,
+html.platform-desktop body {
+  height: 100%;
+  overflow: hidden;
+}
+
+html.platform-desktop #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+html.platform-desktop #root > main {
+  /* 覆盖 main 的 min-h-screen：避免在外层 hidden 容器里再撑一份多余的高度。 */
+  min-height: 0;
+  height: 100%;
+}
+
 #root {
   @apply w-full min-h-full m-0 bg-transparent;
 }

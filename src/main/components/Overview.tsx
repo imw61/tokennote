@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { GripVertical, Plus, RefreshCw, Search, WalletCards, X } from 'lucide-react'
 import type { BalanceSnapshot, OverviewTotals, Station } from '../types'
 import {
@@ -15,14 +16,29 @@ type OverviewProps = {
   snapshots: Record<string, BalanceSnapshot>
   totals: OverviewTotals
   loading: boolean
+  /**
+   * 首次 `get_app_data` 是否已经返回。安卓冷启动比桌面慢得多，在 IPC 第一次往返
+   * 完成前 stations 还是初始空数组，如果直接展示"还没有监控站点"会让用户误以为
+   * 配置被清掉；下拉/点击刷新走的是 `refresh_all`，那一次会把数据一起带回来，
+   * 这就是"刷新后才显示站点"的根因。
+   */
+  initialLoaded: boolean
   onAdd: () => void
   onOpen: (id: string) => void
   onReorder: (draggedId: string, targetId: string) => Promise<void>
   onRefresh: (id: string) => void
+  /**
+   * 安卓端首页下拉刷新：触发后立即解除手势状态、不展示外露的"下拉条"动画，
+   * 仅在 header 现有 loading icon 上反映异步刷新进度。桌面端可以传同一个回调，
+   * 但实际上下拉手势在桌面 mouse 场景不会被触发。
+   */
+  onRefreshAll: () => void
 }
 
 type DragMeta = {
   stationId: string
+  pointerId: number
+  pointerType: 'mouse' | 'touch' | 'pen' | string
   width: number
   height: number
   offsetX: number
@@ -31,25 +47,82 @@ type DragMeta = {
   startY: number
   pointerX: number
   pointerY: number
+  /** 触屏长按计时器；超过阈值后才把"待拖拽"提升为"拖拽中"，避免误触阻断页面滚动 */
+  longPressTimer: number | null
+  /** 长按计时器是否已经触发 */
+  longPressArmed: boolean
 }
+
+type DragPreviewMeta = {
+  width: number
+  height: number
+  offsetX: number
+  offsetY: number
+  pointerX: number
+  pointerY: number
+}
+
+/** 触屏长按的等待时间，与 Material Design 推荐 250ms 对齐 */
+const TOUCH_LONG_PRESS_MS = 250
+/** 鼠标按下后多远开始拖拽；触屏在长按未到点前用同样阈值取消拖拽，让出滚动 */
+const DRAG_TRIGGER_DISTANCE = 8
 
 export function Overview({
   stations,
   snapshots,
   totals,
   loading,
+  initialLoaded,
   onAdd,
   onOpen,
   onReorder,
-  onRefresh
+  onRefresh,
+  onRefreshAll
 }: OverviewProps) {
   const [searchKeyword, setSearchKeyword] = useState('')
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [blockOpen, setBlockOpen] = useState(false)
   const [pendingDrag, setPendingDrag] = useState<DragMeta | null>(null)
-  const [dragPreview, setDragPreview] = useState<Omit<DragMeta, 'stationId' | 'startX' | 'startY'> | null>(null)
+  const [dragPreview, setDragPreview] = useState<DragPreviewMeta | null>(null)
   const dragOverIdRef = React.useRef<string | null>(null)
+  // 拖拽态的镜像 ref:供文档级 touchmove 非被动监听器同步访问,避免每次状态变化重新注册。
+  const draggingIdRef = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    draggingIdRef.current = draggingId
+  }, [draggingId])
+
+  // 关键:Android WebView 上 `touch-action` 在 touchstart 那一刻就已固化,
+  // 后面再把卡片的 `touch-action` 切到 `none` 对当前这次触摸不生效;
+  // 而 PointerEvent.preventDefault 在多个 WebView 版本上压不住底层的滚动决策——
+  // 一旦浏览器认定这次手势是"竖向滚动",会立即派发 pointercancel,把拖拽态清掉,
+  // 表现就是用户竖向拖一下,拟态预览瞬间消失。
+  //
+  // 解法:在 document 上挂一个 `passive: false` 的 `touchmove` 监听器。只要从挂载起
+  // 就存在非被动监听器,WebView 在 touchstart 阶段就不会做"假定可滚"的快速路径优化,
+  // 等到我们在监听器里 `preventDefault()`,就能在第一次 touchmove 把滚动彻底压住,
+  // 不再触发 pointercancel,拖拽预览也不会丢。
+  React.useEffect(() => {
+    const handler = (event: TouchEvent) => {
+      if (!draggingIdRef.current) return
+      // 仅在拖拽进行中阻止默认滚动;非拖拽阶段 passive: false 监听器只会"被注册",
+      // 不会改变浏览器对滚动的处理(因为我们不调用 preventDefault)。
+      if (event.cancelable) {
+        event.preventDefault()
+      }
+    }
+    document.addEventListener('touchmove', handler, { passive: false })
+    return () => {
+      document.removeEventListener('touchmove', handler)
+    }
+  }, [])
+
+  // 网格容器是否真的溢出（内容高度 > 容器高度）。
+  // 之前用 `stations.length > 6` 的静态阈值不准：手机屏幕短、桌面屏幕高、字体也不同。
+  // 改成实测：用 ResizeObserver 监听容器与子元素尺寸，溢出才允许滚动；不溢出时关掉
+  // overflow-y 以避免触屏的橡皮筋反弹。
+  const gridContainerRef = React.useRef<HTMLDivElement | null>(null)
+  const [isOverflowing, setIsOverflowing] = useState(false)
   const shouldShowSearch = stations.length > 8
 
   useEffect(() => {
@@ -57,6 +130,31 @@ export function Overview({
       setSearchKeyword('')
     }
   }, [searchKeyword, shouldShowSearch])
+
+  // 用 ResizeObserver 实测网格是否溢出。同时观察容器自身尺寸（视口/工具栏变化）
+  // 与第一个子元素之外的整体 scrollHeight 变化（通过 element.scrollHeight 重新比较）。
+  useEffect(() => {
+    const node = gridContainerRef.current
+    if (!node) return
+    if (typeof ResizeObserver === 'undefined') {
+      // 兜底：浏览器没有 ResizeObserver，直接按内容长度估计是否会溢出。
+      setIsOverflowing(stations.length > 6)
+      return
+    }
+    const evaluate = () => {
+      // 在 overflow 关闭的状态下 clientHeight 仍然代表可视高度，scrollHeight 代表内容高度。
+      // hidden 模式下 scrollHeight 仍会反映真实需要的高度，所以可以放心比较。
+      setIsOverflowing(node.scrollHeight - node.clientHeight > 1)
+    }
+    const observer = new ResizeObserver(() => evaluate())
+    observer.observe(node)
+    // 子元素尺寸变化（站点新增 / 删除 / 文案换行）时也要重测。
+    Array.from(node.children).forEach(child => {
+      if (child instanceof HTMLElement) observer.observe(child)
+    })
+    evaluate()
+    return () => observer.disconnect()
+  }, [stations, snapshots, searchKeyword])
 
   const balanceLines = useMemo(() => {
     const entries = Object.entries(totals.currencyBalances).map(([symbol, balance]) => ({
@@ -98,62 +196,147 @@ export function Overview({
 
   const handleDrop = async (targetId: string) => {
     if (!draggingId || draggingId === targetId) {
-      setDraggingId(null)
-      setDragOverId(null)
+      flushSync(() => {
+        setDraggingId(null)
+        setDragOverId(null)
+        setDragPreview(null)
+      })
       dragOverIdRef.current = null
-      setDragPreview(null)
       return
     }
     const currentDraggingId = draggingId
     setBlockOpen(true)
-    setDraggingId(null)
-    setDragOverId(null)
+
+    // 关键:把"乐观换序"和"清拖拽态"用 flushSync 强行打包到同一次 React commit。
+    //
+    // 没有 flushSync 时,事件链路是:
+    //   pointerup → handleDrop → onReorder() 同步部分调用 setData(乐观换序)
+    //                            ↓
+    //                            return Promise(还在 pending)
+    //                          setDraggingId(null) / setDragPreview(null)
+    //                            ↓
+    //                          React 18 大多数时候会自动 batch 这两次 setState,
+    //                          但在 PointerEvent 回调链 + setPointerCapture 释放
+    //                          交错的边缘场景下,偶尔会被切成两次 commit:
+    //                            commit A:拟态消失,stations 还是旧顺序 → 用户看到"回到原位"一帧
+    //                            commit B:stations 切到新顺序
+    //
+    // flushSync 强制把回调里所有 setState(包括 onReorder 内部那一行同步 setData
+    // 触发的更新)一次性提交,下一帧用户看到的必然是"卡片已就位 + 拟态消失",
+    // 任何调度抖动都不会再撕成两帧。
+    //
+    // onReorder 返回的 Promise 仍然带着后续 IPC 等待——我们继续 await,但只用来
+    // 收尾 blockOpen,不再影响视觉同步性。
+    let reorderPromise: Promise<void> = Promise.resolve()
+    flushSync(() => {
+      reorderPromise = onReorder(currentDraggingId, targetId)
+      setDraggingId(null)
+      setDragOverId(null)
+      setDragPreview(null)
+    })
     dragOverIdRef.current = null
-    setDragPreview(null)
-    await onReorder(currentDraggingId, targetId)
-    window.setTimeout(() => setBlockOpen(false), 120)
+
+    try {
+      await reorderPromise
+    } catch (error) {
+      console.error('[Overview] onReorder failed', error)
+    } finally {
+      window.setTimeout(() => setBlockOpen(false), 120)
+    }
   }
 
   useEffect(() => {
     if (!draggingId && !pendingDrag) return
 
-    const handleWindowMouseMove = (event: MouseEvent) => {
+    const resolveDropTargetId = (clientX: number, clientY: number): string | null => {
+      // 触屏环境下 pointerenter 事件在指针被原始元素 capture 时不会跨元素触发，
+      // 因此必须用 elementsFromPoint 主动找一下"指针下方"是哪张站点卡片。
+      if (typeof document === 'undefined' || !document.elementsFromPoint) return null
+      const candidates = document.elementsFromPoint(clientX, clientY)
+      for (const candidate of candidates) {
+        if (!(candidate instanceof HTMLElement)) continue
+        const card = candidate.closest('[data-station-id]') as HTMLElement | null
+        if (card) {
+          return card.dataset.stationId || null
+        }
+      }
+      return null
+    }
+
+    const handleWindowPointerMove = (event: PointerEvent) => {
+      if (pendingDrag && event.pointerId !== pendingDrag.pointerId) return
+
       if (draggingId) {
+        // 拖拽中阻止默认行为，避免触屏被解释为页面滚动；
+        // event.cancelable 在 capture-phase 之外不可保证为 true，故双保险。
+        if (event.cancelable) event.preventDefault()
         setDragPreview(current => current ? {
           ...current,
           pointerX: event.clientX,
           pointerY: event.clientY
         } : current)
+        const targetId = resolveDropTargetId(event.clientX, event.clientY)
+        if (targetId !== dragOverIdRef.current) {
+          dragOverIdRef.current = targetId
+          setDragOverId(targetId)
+        }
         return
       }
 
       if (!pendingDrag) return
       const dx = Math.abs(event.clientX - pendingDrag.startX)
       const dy = Math.abs(event.clientY - pendingDrag.startY)
-      if (dx + dy < 6) return
 
+      // 触屏：长按未到点前若手指已移动一定距离，视为滚动手势，取消"待拖拽"。
+      if (pendingDrag.pointerType === 'touch' && !pendingDrag.longPressArmed) {
+        if (dx + dy >= DRAG_TRIGGER_DISTANCE) {
+          if (pendingDrag.longPressTimer !== null) {
+            window.clearTimeout(pendingDrag.longPressTimer)
+          }
+          setPendingDrag(null)
+          return
+        }
+        // 触屏在长按到点前不进入拖拽，留给 setTimeout 触发。
+        return
+      }
+
+      if (dx + dy < DRAG_TRIGGER_DISTANCE) return
+
+      // 鼠标 / 笔：直接进入拖拽
       setBlockOpen(true)
       setDraggingId(pendingDrag.stationId)
       dragOverIdRef.current = null
       setDragOverId(null)
+      // 指尖永远落在卡片正中：用 width/2、height/2 作为 offset，渲染时 left = pointerX - offsetX
+      // 就把卡片中心绑定到指尖位置，避免"卡片在点击点下方一截"的体感问题。
       setDragPreview({
         width: pendingDrag.width,
         height: pendingDrag.height,
-        offsetX: pendingDrag.offsetX,
-        offsetY: pendingDrag.offsetY,
+        offsetX: pendingDrag.width / 2,
+        offsetY: pendingDrag.height / 2,
         pointerX: event.clientX,
         pointerY: event.clientY
       })
       setPendingDrag(null)
     }
 
-    const handleWindowMouseUp = () => {
+    const handleWindowPointerUp = (event: PointerEvent) => {
+      if (pendingDrag && event.pointerId !== pendingDrag.pointerId) return
+      if (draggingId && pendingDrag === null) {
+        // 普通流程下 draggingId 已经存在；继续走 drop 逻辑
+      }
+
+      if (pendingDrag && pendingDrag.longPressTimer !== null) {
+        window.clearTimeout(pendingDrag.longPressTimer)
+      }
+
       if (pendingDrag && !draggingId) {
         setPendingDrag(null)
         return
       }
 
       const targetId = dragOverIdRef.current
+        ?? resolveDropTargetId(event.clientX, event.clientY)
       if (targetId && targetId !== draggingId) {
         void handleDrop(targetId)
         return
@@ -166,11 +349,25 @@ export function Overview({
       window.setTimeout(() => setBlockOpen(false), 0)
     }
 
-    window.addEventListener('mousemove', handleWindowMouseMove)
-    window.addEventListener('mouseup', handleWindowMouseUp)
+    const handleWindowPointerCancel = () => {
+      if (pendingDrag && pendingDrag.longPressTimer !== null) {
+        window.clearTimeout(pendingDrag.longPressTimer)
+      }
+      setDraggingId(null)
+      setDragOverId(null)
+      dragOverIdRef.current = null
+      setDragPreview(null)
+      setPendingDrag(null)
+      window.setTimeout(() => setBlockOpen(false), 0)
+    }
+
+    window.addEventListener('pointermove', handleWindowPointerMove, { passive: false })
+    window.addEventListener('pointerup', handleWindowPointerUp)
+    window.addEventListener('pointercancel', handleWindowPointerCancel)
     return () => {
-      window.removeEventListener('mousemove', handleWindowMouseMove)
-      window.removeEventListener('mouseup', handleWindowMouseUp)
+      window.removeEventListener('pointermove', handleWindowPointerMove)
+      window.removeEventListener('pointerup', handleWindowPointerUp)
+      window.removeEventListener('pointercancel', handleWindowPointerCancel)
     }
   }, [draggingId, pendingDrag])
 
@@ -208,8 +405,23 @@ export function Overview({
         </div>
       ) : null}
 
-      <div className="flex-1 overflow-auto px-4 pb-3 grid grid-cols-2 gap-2.5 content-start scrollbar-hide stagger-children">
-        {stations.length === 0 ? <EmptyState onAdd={onAdd} /> : null}
+      {/*
+        网格容器：
+        - 仅当容器真的"内容高度 > 视口高度"时才允许滚动；不溢出则用 overflow-y-hidden +
+          overscroll-none 关掉触屏的橡皮筋拉动。
+        - 滚动条统一用 .scrollbar-hide 不显示。
+        - `isOverflowing` 由 ResizeObserver 在 useEffect 里实测得出，不再依赖固定阈值。
+      */}
+      <div
+        ref={gridContainerRef}
+        className={`flex-1 px-4 pb-3 grid grid-cols-2 gap-2.5 content-start stagger-children ${
+          isOverflowing
+            ? 'overflow-y-auto scrollbar-hide'
+            : 'overflow-y-hidden overscroll-none'
+        }`}
+      >
+        {!initialLoaded && stations.length === 0 ? <InitialLoadingState /> : null}
+        {initialLoaded && stations.length === 0 ? <EmptyState onAdd={onAdd} /> : null}
         {stations.length > 0 && visibleStations.length === 0 ? <SearchEmptyState keyword={searchKeyword} /> : null}
         {visibleStations.map(station => (
           <StationCard
@@ -230,19 +442,59 @@ export function Overview({
               setDragPreview(null)
               window.setTimeout(() => setBlockOpen(false), 0)
             }}
-            onDragEnter={() => {
-              if (!draggingId || draggingId === station.id) return
-              dragOverIdRef.current = station.id
-              setDragOverId(station.id)
-            }}
             onCardPointerDown={event => {
               if (event.button !== 0) return
               const target = event.target as HTMLElement
               if (target.closest('button, input, textarea, select, label, a')) return
               const card = event.currentTarget
               const rect = card.getBoundingClientRect()
+              const pointerType = event.pointerType || 'mouse'
+              const capturedPointerId = event.pointerId
+
+              // 触屏：先创建 pending，启动长按计时器；超过阈值才提升为 dragging。
+              // 计时期间手指若移动超过 DRAG_TRIGGER_DISTANCE 会在 pointermove 中取消，让出滚动。
+              const longPressTimer = pointerType === 'touch'
+                ? window.setTimeout(() => {
+                    setPendingDrag(current => {
+                      if (!current || current.stationId !== station.id) return current
+                      // 标记长按已满足；下一次 pointermove 会把 pending 推升为 dragging。
+                      // 这里不能直接 setDraggingId，因为我们没有 PointerEvent 实例。
+                      return {
+                        ...current,
+                        longPressArmed: true
+                      }
+                    })
+                    setBlockOpen(true)
+                    setDraggingId(prev => prev ?? station.id)
+                    // 触屏长按：让指尖始终落在预览卡片正中央，
+                    // 不再使用 pointerdown 时的相对偏移（那会让卡片明显偏离指尖、压在下方）。
+                    setDragPreview({
+                      width: rect.width,
+                      height: rect.height,
+                      offsetX: rect.width / 2,
+                      offsetY: rect.height / 2,
+                      pointerX: event.clientX,
+                      pointerY: event.clientY
+                    })
+                    // 关键：长按到点后立刻把 pointer capture 拿到卡片自己身上。
+                    // 触屏默认会按 touch-action 解释竖向移动为滚动；setPointerCapture 之后
+                    // 系统会把后续 pointermove 一律 dispatch 给卡片元素 / 不再走默认滚动手势，
+                    // 让卡片可以"任意方向"拖动（包括上下）。
+                    try {
+                      if (typeof card.setPointerCapture === 'function' && capturedPointerId !== -1) {
+                        card.setPointerCapture(capturedPointerId)
+                      }
+                    } catch (error) {
+                      // capture 失败不阻塞拖拽，pointer events 在桌面端通常用不到这一步
+                      console.warn('[StationCard] setPointerCapture failed', error)
+                    }
+                  }, TOUCH_LONG_PRESS_MS)
+                : null
+
               setPendingDrag({
                 stationId: station.id,
+                pointerId: event.pointerId,
+                pointerType,
                 width: rect.width,
                 height: rect.height,
                 offsetX: event.clientX - rect.left,
@@ -250,12 +502,10 @@ export function Overview({
                 startX: event.clientX,
                 startY: event.clientY,
                 pointerX: event.clientX,
-                pointerY: event.clientY
+                pointerY: event.clientY,
+                longPressTimer,
+                longPressArmed: false
               })
-            }}
-            onDrop={async event => {
-              event.stopPropagation()
-              await handleDrop(station.id)
             }}
             onRefresh={() => onRefresh(station.id)}
           />
@@ -268,8 +518,14 @@ export function Overview({
             className="absolute"
             style={{
               width: dragPreview.width,
-              left: dragPreview.pointerX - dragPreview.offsetX,
-              top: dragPreview.pointerY - dragPreview.offsetY,
+              // 关键：用 left/top 把指尖位置当作锚点，再用 translate(-50%, -50%) 把
+              // "本元素自身实际渲染出来的盒子"中心移到锚点上。这样无论预览的真实高度
+              // 比捕获时的 rect.height 大多少（StationDragPreview 内部的 padding / gap
+              // 与原卡片不同，外加 transform: scale(...) 会让视觉中心略偏），都能保证
+              // 卡片中心严格跟随指尖，不再"压在指尖下方"或"偏离上方"。
+              left: dragPreview.pointerX,
+              top: dragPreview.pointerY,
+              transform: 'translate(-50%, -50%)',
               filter: 'drop-shadow(0 22px 40px rgba(15, 23, 42, 0.22))'
             }}
           >
@@ -403,6 +659,20 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
   )
 }
 
+/**
+ * 首次 IPC 还没回来时的占位。安卓冷启动这一段最长会出现几百毫秒空白，
+ * 之前会被 `EmptyState` 抢着渲染成"还没有监控站点"。这里换成一个克制的骨架，
+ * 既避免让用户误以为数据丢失，也不会和真正的空态冲突。
+ */
+function InitialLoadingState() {
+  return (
+    <div className="col-span-2 flex flex-col items-center justify-center gap-2 py-10 px-4 text-center" aria-busy="true" aria-live="polite">
+      <RefreshCw size={22} className="text-gray-300 animate-spin" />
+      <span className="text-xs font-bold text-gray-400">正在加载站点…</span>
+    </div>
+  )
+}
+
 function SearchEmptyState({ keyword }: { keyword: string }) {
   return (
     <div className="col-span-2 flex flex-col items-center gap-2 rounded-2xl border border-gray-100 bg-white px-4 py-8 text-center shadow-sm">
@@ -422,8 +692,6 @@ function StationCard({
   onOpen,
   onRefresh,
   onCardPointerDown,
-  onDragEnter,
-  onDrop,
   onDragCancel
 }: {
   station: Station
@@ -432,9 +700,7 @@ function StationCard({
   isDragging: boolean
   isDropTarget: boolean
   onOpen: () => void
-  onCardPointerDown: (event: React.MouseEvent<HTMLElement>) => void
-  onDragEnter: () => void
-  onDrop: (event: React.MouseEvent<HTMLElement>) => void
+  onCardPointerDown: (event: React.PointerEvent<HTMLElement>) => void
   onDragCancel: () => void
   onRefresh: () => void
 }) {
@@ -444,10 +710,22 @@ function StationCard({
 
   return (
     <article
+      data-station-id={station.id}
       onClick={onOpen}
-      onMouseEnter={onDragEnter}
-      onMouseUp={onDrop}
-      onMouseDown={onCardPointerDown}
+      onPointerDown={onCardPointerDown}
+      style={{
+        // 触屏手势分流:
+        // - 默认 `pan-y`:短滑允许浏览器把竖向滚动手势透传给祖先 grid 容器,
+        //   保证整列卡片可以正常上下滑(否则像现在一样:屏幕几乎被卡片覆盖,
+        //   手指落在卡片上时 `none` 会把滚动手势全部吞掉,用户根本下滑不到下面的卡片)。
+        // - 真正进入拖拽状态(`isDragging`)后切到 `none`:此时 onCardPointerDown
+        //   里已经走过 `setPointerCapture`,后续 pointer 事件由 JS 独占,不会被
+        //   浏览器手势识别截胡,卡片可以任意方向(包括竖向)被拖动。
+        // - 250ms 长按计时期间:如果手指已经开始竖向滑,window 上的 pointermove /
+        //   pointercancel 处理器会清掉 longPressTimer(见上方 useEffect),
+        //   滚动手势继续走浏览器,这时拖拽根本不会启动。
+        touchAction: isDragging ? 'none' : 'pan-y'
+      }}
       className={`relative flex flex-col gap-2.5 p-3 bg-white rounded-xl shadow-sm border transition-all duration-200 hover:shadow-md hover:scale-[1.01] cursor-grab active:cursor-grabbing animate-fade-up card-hover-lift ${
         isDropTarget
           ? 'border-primary-300 bg-primary-50/60'

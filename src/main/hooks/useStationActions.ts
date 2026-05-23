@@ -11,13 +11,19 @@ type UseStationActionsOptions = {
   setData: Dispatch<SetStateAction<AppData>>
   snapshots: Record<string, BalanceSnapshot>
   onStationRemoved?: () => void
+  /**
+   * 拖拽排序专用:在 reorder_stations 命令前后短暂屏蔽
+   * `stations-changed` 事件触发的全量重拉,避免冗余刷新引起视觉回弹。
+   */
+  suppressStationsChangedRefresh?: (durationMs?: number) => void
 }
 
 export function useStationActions({
   data,
   setData,
   snapshots,
-  onStationRemoved
+  onStationRemoved,
+  suppressStationsChangedRefresh
 }: UseStationActionsOptions) {
   const [loading, setLoading] = useState(false)
   const [openingConsoleId, setOpeningConsoleId] = useState<string | null>(null)
@@ -119,6 +125,10 @@ export function useStationActions({
     if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return
 
     const nextStations = moveStation(data.stations, fromIndex, toIndex)
+    // 调用 IPC 之前就开启屏蔽窗口:reorder_stations 完成后后端会 emit
+    // `stations-changed`,如果不屏蔽,前端会再发一次 `get_app_data`,
+    // 在边缘时序下覆盖掉刚刚乐观换序的 stations 数组引用,引起卡片视觉抖动。
+    suppressStationsChangedRefresh?.(800)
     setData(current => ({ ...current, stations: nextStations }))
 
     try {

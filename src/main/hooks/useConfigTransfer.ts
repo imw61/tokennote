@@ -5,6 +5,7 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { useRef, useState } from 'react'
 import { decryptConfigPayload, encryptConfigPayload, validateTransferKey } from '../../lib/config-transfer-crypto'
 import { buildConfigExport, parseConfigImport } from '../../lib/config-transfer'
+import { buildQrFrames, type QrFramePlan } from '../../lib/config-transfer-qr'
 import type { ConfigTransferDialogState } from '../component-props'
 import type { AppData } from '../types'
 
@@ -19,6 +20,10 @@ export function useConfigTransfer({ data, setData, resetViewState, onRefreshAll 
   const [exportingConfig, setExportingConfig] = useState(false)
   const [importingConfig, setImportingConfig] = useState(false)
   const [configTransferDialog, setConfigTransferDialog] = useState<ConfigTransferDialogState | null>(null)
+  // 二维码导出对话框的当前帧计划。`null` 表示未在展示。每发起一次新的扫码导出都会重置。
+  const [qrExportPlan, setQrExportPlan] = useState<QrFramePlan | null>(null)
+  // 是否正在展示扫码导入对话框（手机端）。
+  const [qrImportOpen, setQrImportOpen] = useState(false)
   const confirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null)
   const keyResolverRef = useRef<((key: string | null) => void) | null>(null)
 
@@ -149,6 +154,108 @@ export function useConfigTransfer({ data, setData, resetViewState, onRefreshAll 
     }
   }
 
+  /**
+   * 把已合并的密文（可能来自磁盘文件或扫码合并）解密、解析、推给后端。
+   * 抽公用的原因：扫码导入与文件导入只是数据来源不同，从"输入密钥 → 解密 → import_app_data → 刷新"的流程一致。
+   */
+  const applyEncryptedPayload = async (raw: string, keyDialogTitle: string, keyDialogMessage: string) => {
+    const transferKey = await requestTransferKey(keyDialogTitle, keyDialogMessage, '开始解密')
+    if (!transferKey) return false
+    const decrypted = await decryptConfigPayload(raw, transferKey)
+    const imported = parseConfigImport(decrypted)
+    const nextData = await invoke<AppData>('import_app_data', { input: imported })
+    setData(nextData)
+    resetViewState()
+    try {
+      await onRefreshAll()
+      await message('配置已解密、导入并刷新完成。', {
+        title: '导入成功',
+        kind: 'info'
+      })
+    } catch (refreshError) {
+      console.error(refreshError)
+      await message('配置已导入，但刷新失败，请稍后手动刷新一次。', {
+        title: '导入成功',
+        kind: 'warning'
+      })
+    }
+    return true
+  }
+
+  /**
+   * 电脑端：把当前配置加密后切片为多张二维码，弹出展示对话框循环播放。
+   * 不写入磁盘，结束后由用户手动关闭对话框。
+   */
+  const exportConfigQr = async () => {
+    const confirmed = await requestConfirmation(
+      '将以二维码形式展示当前配置，请用手机端 TokenNote 的「扫码导入」对准屏幕。\n\n二维码内容仍使用 6 位英文数字混合密钥加密，输入内容会自动转成大写。展示过程中请勿截图或被他人拍摄；扫描完成后再次输入相同的密钥即可在手机端导入。',
+      '继续导出'
+    )
+    if (!confirmed) return
+    setExportingConfig(true)
+    try {
+      const transferKey = await requestExportTransferKey()
+      if (!transferKey) return
+      const exportPayload = buildConfigExport({
+        settings: data.settings,
+        stations: data.stations,
+        localStationReviews: data.localStationReviews
+      })
+      const encryptedPayload = await encryptConfigPayload(JSON.stringify(exportPayload), transferKey)
+      const plan = await buildQrFrames(encryptedPayload)
+      setQrExportPlan(plan)
+    } catch (error) {
+      console.error(error)
+      await message(`生成二维码失败：${error instanceof Error ? error.message : String(error)}`, {
+        title: '导出失败',
+        kind: 'error'
+      })
+    } finally {
+      setExportingConfig(false)
+    }
+  }
+
+  const closeQrExport = () => {
+    setQrExportPlan(null)
+  }
+
+  /**
+   * 手机端：打开摄像头扫码导入对话框。集齐分片后由 dialog 调用 `onQrPayloadAssembled`，
+   * 进入"输入密钥 → 解密 → import_app_data → 刷新"的统一路径。
+   */
+  const importConfigQr = async () => {
+    const confirmed = await requestConfirmation(
+      '即将开启相机扫描电脑端展示的二维码。\n\n收齐所有分片后需要输入与导出时一致的 6 位密钥才能解密导入；导入会覆盖当前的站点、偏好设置和本机评价记录。',
+      '开始扫描'
+    )
+    if (!confirmed) return
+    setQrImportOpen(true)
+  }
+
+  const closeQrImport = () => {
+    setQrImportOpen(false)
+  }
+
+  const onQrPayloadAssembled = async (payload: string) => {
+    setQrImportOpen(false)
+    setImportingConfig(true)
+    try {
+      await applyEncryptedPayload(
+        payload,
+        '输入导入 key',
+        '请输入电脑端导出时设置的 6 位密钥，用于解密刚刚扫到的配置。'
+      )
+    } catch (error) {
+      console.error(error)
+      await message(`导入失败：${error instanceof Error ? error.message : String(error)}`, {
+        title: '导入失败',
+        kind: 'error'
+      })
+    } finally {
+      setImportingConfig(false)
+    }
+  }
+
   const onConfigTransferDialogChange = (value: string) => {
     const normalized = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
     setConfigTransferDialog(current => current && current.mode === 'key'
@@ -192,6 +299,13 @@ export function useConfigTransfer({ data, setData, resetViewState, onRefreshAll 
     importConfig,
     onConfigTransferDialogChange,
     onConfigTransferDialogConfirm,
-    onConfigTransferDialogCancel
+    onConfigTransferDialogCancel,
+    qrExportPlan,
+    qrImportOpen,
+    exportConfigQr,
+    importConfigQr,
+    closeQrExport,
+    closeQrImport,
+    onQrPayloadAssembled
   }
 }

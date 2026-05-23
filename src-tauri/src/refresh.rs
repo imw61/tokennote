@@ -12,8 +12,12 @@ use crate::{
         LowBalanceAlertPayload, SharedData, Station,
     },
     providers,
-    windowing::show_low_balance_alert_window_internal,
 };
+
+#[cfg(not(target_os = "android"))]
+use crate::windowing::show_low_balance_alert_window_internal;
+#[cfg(target_os = "android")]
+use crate::windowing_android::show_low_balance_alert_window_internal;
 
 const FETCH_RETRY_COUNT: usize = 2;
 const FETCH_RETRY_DELAY_MS: u64 = 800;
@@ -294,6 +298,38 @@ pub(crate) async fn show_low_balance_alert_payload(
     payload: LowBalanceAlertPayload,
 ) -> Result<(), String> {
     *state.low_balance_alert_payload.lock().await = Some(payload.clone());
+    // Android：直接通过 JNI 推送一条系统通知，确保 WebView 被挂起时仍然能提醒。
+    // 桌面端这里没有副作用，依旧由独立窗口处理。
+    #[cfg(target_os = "android")]
+    {
+        let android_enabled = {
+            let state = app.state::<AppState>();
+            let data = state.data.lock().await;
+            data.settings.android_low_balance_notification_enabled
+        };
+        if android_enabled {
+        let visible = payload.items.iter().take(3).map(|item| {
+            // 通知摘要中币种符号统一走 normalize_currency_symbol。
+            let symbol = crate::currency::normalize_currency_symbol(&item.currency);
+            let name = if item.station_name.trim().is_empty() {
+                "未命名".to_string()
+            } else {
+                item.station_name.clone()
+            };
+            format!("{}: {}{:.2}", name, symbol, item.current_balance)
+        }).collect::<Vec<_>>().join("；");
+        let more_count = payload.total_count.saturating_sub(payload.items.len().min(3));
+        let body = if more_count > 0 {
+            format!("{}（还有 {} 个）", visible, more_count)
+        } else {
+            visible
+        };
+        let _ = crate::android::push_low_balance_notification(
+            &format!("{} 个站点余额不足", payload.total_count),
+            &body,
+        );
+        }
+    }
     show_low_balance_alert_window_internal(app, payload)
 }
 
@@ -449,6 +485,27 @@ async fn do_refresh_cycle(app: &AppHandle, data: &SharedData, data_path: &PathBu
         )
     };
     let _ = refresh_stations_with_limit(app, data, data_path, stations, settings, false).await;
+
+    // Android：每完成一轮刷新后，主动把摘要推送给前台 Service 的常驻通知与桌面小组件，
+    // 即便此时 WebView 已经被系统挂起，前端 effect 不再触发，状态依然能保持最新。
+    #[cfg(target_os = "android")]
+    {
+        let snapshot_data = data.lock().await.clone();
+        let background_enabled = snapshot_data
+            .settings
+            .android_background_refresh_enabled;
+        if background_enabled {
+            let (title, summary) =
+                crate::android_summary::build_persistent_notification_lines(&snapshot_data);
+            let _ =
+                crate::android::update_persistent_notification(&title, &summary);
+        }
+        let widget_json = crate::android_summary::build_widget_payload_json(&snapshot_data);
+        if !widget_json.is_empty() {
+            let _ = crate::android::update_widgets_with_json(&widget_json);
+        }
+        let _ = app;
+    }
 }
 
 pub(crate) fn start_scheduler(app: AppHandle, data: SharedData, data_path: PathBuf) {

@@ -122,7 +122,7 @@ fn build_manifest_url(current_version: &str, machine_uuid: &str) -> Result<Strin
         reqwest::Url::parse(UPDATE_MANIFEST_URL).map_err(|error| format!("更新地址无效: {error}"))?;
     url.query_pairs_mut()
         .append_pair("clientVersion", current_version)
-        .append_pair("source", "desktop");
+        .append_pair("source", crate::source_label::source_label());
     if !machine_uuid.is_empty() {
         url.query_pairs_mut()
             .append_pair("machineUuid", machine_uuid);
@@ -134,7 +134,7 @@ pub(crate) async fn fetch_required_update_payload(
     app: &AppHandle,
 ) -> Result<Option<UpdateWindowPayload>, String> {
     let current_version = normalize_version(&app.package_info().version.to_string());
-    let machine_uuid = machine_uid::get().unwrap_or_default();
+    let machine_uuid = crate::device_id::machine_id_or_default();
     let request_url = build_manifest_url(&current_version, &machine_uuid)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))

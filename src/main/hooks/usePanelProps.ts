@@ -20,6 +20,7 @@ type UsePanelPropsOptions = {
   data: AppData
   persistenceNotice: PersistenceNotice | null
   snapshots: Record<string, BalanceSnapshot>
+  initialLoaded: boolean
   view: ViewState
   update: UpdateState
   stationActions: StationActionsState
@@ -32,6 +33,7 @@ export function usePanelProps({
   data,
   persistenceNotice,
   snapshots,
+  initialLoaded,
   view,
   update,
   stationActions,
@@ -54,6 +56,16 @@ export function usePanelProps({
   const onExportConfig = useCallback(() => {
     void configTransfer.exportConfig()
   }, [configTransfer.exportConfig])
+
+  // 二维码导出（电脑端）：把当前配置加密后切成多张二维码循环展示
+  const onExportConfigQr = useCallback(() => {
+    void configTransfer.exportConfigQr()
+  }, [configTransfer.exportConfigQr])
+
+  // 二维码导入（手机端）：开启相机扫描电脑端展示的二维码
+  const onImportConfigQr = useCallback(() => {
+    void configTransfer.importConfigQr()
+  }, [configTransfer.importConfigQr])
 
   const onRefreshStation = useCallback((id: string) => {
     void stationActions.refreshOne(id)
@@ -91,6 +103,7 @@ export function usePanelProps({
     snapshots,
     totals: stationActions.totals,
     loading: stationActions.loading,
+    initialLoaded,
     updateCurrentVersionText: `v${update.updateInfo?.currentVersion ?? '读取中'}`,
     updateStatusText: update.updateStatusText,
     primaryUpdateLink: update.primaryUpdateLink,
@@ -115,6 +128,8 @@ export function usePanelProps({
     onCheckUpdate,
     onImportConfig,
     onExportConfig,
+    onExportConfigQr,
+    onImportConfigQr,
     onConfigTransferDialogChange: configTransfer.onConfigTransferDialogChange,
     onConfigTransferDialogConfirm: configTransfer.onConfigTransferDialogConfirm,
     onConfigTransferDialogCancel: configTransfer.onConfigTransferDialogCancel,
@@ -127,6 +142,7 @@ export function usePanelProps({
     onAddStation: stationForm.addStation,
     onOpenStation: view.openStation,
     onReorderStations: stationActions.reorderStations,
+    onRefreshAll: stationActions.refreshAll,
     onOpenPrimaryUpdateLink,
     onOpenFallbackUpdateLink: update.fallbackUpdateLink ? onOpenFallbackUpdateLink : undefined,
     onReviewDraftChange: stationReviews.setDraft,
@@ -140,9 +156,11 @@ export function usePanelProps({
     onBackFromReviews: view.backFromReviews
   }), [
     configTransfer.exportConfig,
+    configTransfer.exportConfigQr,
     configTransfer.exportingConfig,
     configTransfer.configTransferDialog,
     configTransfer.importConfig,
+    configTransfer.importConfigQr,
     configTransfer.importingConfig,
     configTransfer.onConfigTransferDialogCancel,
     configTransfer.onConfigTransferDialogChange,
@@ -150,10 +168,13 @@ export function usePanelProps({
     data.settings,
     data.stations,
     persistenceNotice,
+    initialLoaded,
     onCheckUpdate,
     onDeleteStation,
     onExportConfig,
+    onExportConfigQr,
     onImportConfig,
+    onImportConfigQr,
     onOpenConsole,
     onOpenFallbackUpdateLink,
     onOpenPrimaryUpdateLink,
@@ -170,6 +191,7 @@ export function usePanelProps({
     stationReviews.submitting,
     stationActions.loading,
     stationActions.openingConsoleId,
+    stationActions.refreshAll,
     stationActions.reorderStations,
     stationActions.saveSettings,
     stationActions.totals,

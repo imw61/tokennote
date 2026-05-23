@@ -1,7 +1,7 @@
 # TokenNote
 
 <p align="center">
-  <img src="src-tauri/icons/128x128.png" alt="TokenNote Logo" width="80">
+  <img src="src-tauri/icons/128x128@2x.png" alt="TokenNote Logo" width="80">
 </p>
 
 <p align="center">

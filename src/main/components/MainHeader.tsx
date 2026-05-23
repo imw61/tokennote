@@ -1,5 +1,6 @@
 import { ArrowLeft, Home, Minus, Pin, RefreshCw, Settings, X } from 'lucide-react'
 import type { MainHeaderProps } from '../component-props'
+import { isAndroid } from '../../lib/platform'
 
 export function MainHeader({
   title,
@@ -14,6 +15,11 @@ export function MainHeader({
   onToggleSettings,
   onClose
 }: MainHeaderProps) {
+  // 移动端没有自管理窗口的概念：
+  // - 最小化 / 关闭 由系统的 home / back 手势负责
+  // - 置顶（始终在最前）在 Android 上没有对应行为
+  // 这三个按钮在安卓上隐藏掉，避免点了不起作用让用户疑惑。
+  const showWindowControls = !isAndroid()
   return (
     <header
       className="flex items-center justify-between gap-3 px-5 pt-5 pb-3 select-none animate-fade-up"
@@ -34,24 +40,28 @@ export function MainHeader({
         >
           <Home size={14} />
         </button>
-        <button
-          className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-gray-200 text-gray-500 transition-all duration-200 interactive-bounce"
-          onClick={onMinimize}
-          aria-label="最小化"
-        >
-          <Minus size={14} />
-        </button>
-        <button
-          className={`w-7 h-7 flex items-center justify-center rounded-[10px] transition-all duration-200 interactive-bounce ${
-            alwaysOnTop
-              ? 'bg-primary-50 text-primary-600 hover:bg-primary-100'
-              : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
-          }`}
-          onClick={onToggleAlwaysOnTop}
-          aria-label={alwaysOnTop ? '取消置顶' : '窗口置顶'}
-        >
-          <Pin size={14} />
-        </button>
+        {showWindowControls ? (
+          <button
+            className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-gray-200 text-gray-500 transition-all duration-200 interactive-bounce"
+            onClick={onMinimize}
+            aria-label="最小化"
+          >
+            <Minus size={14} />
+          </button>
+        ) : null}
+        {showWindowControls ? (
+          <button
+            className={`w-7 h-7 flex items-center justify-center rounded-[10px] transition-all duration-200 interactive-bounce ${
+              alwaysOnTop
+                ? 'bg-primary-50 text-primary-600 hover:bg-primary-100'
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+            }`}
+            onClick={onToggleAlwaysOnTop}
+            aria-label={alwaysOnTop ? '取消置顶' : '窗口置顶'}
+          >
+            <Pin size={14} />
+          </button>
+        ) : null}
         <button
           className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-gray-200 text-gray-500 transition-all duration-200 interactive-bounce"
           onClick={onRefreshAll}
@@ -70,13 +80,15 @@ export function MainHeader({
         >
           {showSettings ? <ArrowLeft size={14} /> : <Settings size={14} />}
         </button>
-        <button
-          className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-red-50 hover:text-red-500 text-gray-500 transition-all duration-200 interactive-bounce"
-          onClick={onClose}
-          aria-label="关闭"
-        >
-          <X size={14} />
-        </button>
+        {showWindowControls ? (
+          <button
+            className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-red-50 hover:text-red-500 text-gray-500 transition-all duration-200 interactive-bounce"
+            onClick={onClose}
+            aria-label="关闭"
+          >
+            <X size={14} />
+          </button>
+        ) : null}
       </div>
     </header>
   )

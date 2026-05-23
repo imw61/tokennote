@@ -1,12 +1,15 @@
 {
   "type": "module",
-  "version": "0.3.5",
+  "version": "0.3.21",
   "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build",
+    "android:build:debug": "tauri android build --debug --apk",
     "pack:windows-test": "bash ./scripts/pack-windows-test.sh"
   },
   "dependencies": {
@@ -15,7 +18,9 @@
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@vitejs/plugin-react": "^5.1.1",
+    "jsqr": "1.4.0",
     "lucide-react": "^0.562.0",
+    "qrcode": "1.5.4",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "typescript": "^5.9.3",
@@ -24,6 +29,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.5",
     "@types/node": "^25.7.0",
+    "@types/qrcode": "1.5.6",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.5.0",

@@ -2,6 +2,7 @@ import { Activity, ArrowLeft, Clock3, ExternalLink, Gauge, Layers3, Loader2, Mes
 import { useMemo } from 'react'
 import { BalanceTrendChart } from '../../components/BalanceTrendChart'
 import { PieChart } from '../../components/PieChart'
+import { isAndroid } from '../../lib/platform'
 import type { BalanceHistoryPoint } from '../../lib/balance-history'
 import type { BalanceSnapshot, Station } from '../types'
 import {
@@ -49,6 +50,9 @@ export function StationDetail({
   const low = snapshot?.status === 'success' && snapshot.currentBalance <= station.lowBalanceThreshold
   const showSub2ApiDailyMetrics = isSub2ApiStation(station.stationType)
   const showPerformanceMetrics = !isDeepSeekStation(station.stationType)
+  // 快捷登录（打开站点网页 + 注入登录态）依赖桌面 webview 的"独立窗口 + cookie 注入"能力，
+  // Android 端没有合适的等价实现，直接隐藏按钮，避免点击后报错或行为不一致。
+  const showQuickLogin = !isAndroid()
 
   const pieData = useMemo(() => {
     if (!snapshot?.models) return []
@@ -89,9 +93,11 @@ export function StationDetail({
             <button onClick={onOpenReview} className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-primary-50 hover:text-primary-600 text-gray-500 transition-all duration-200 interactive-bounce" title="评价站点">
               <MessageSquareQuote size={13} />
             </button>
-            <button onClick={onOpenConsole} disabled={openingConsole} className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-primary-50 hover:text-primary-600 text-gray-500 transition-all duration-200 interactive-bounce disabled:opacity-50 disabled:cursor-not-allowed" title={openingConsole ? '正在加载控制台...' : '打开站点网页'}>
-              {openingConsole ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
-            </button>
+            {showQuickLogin ? (
+              <button onClick={onOpenConsole} disabled={openingConsole} className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-primary-50 hover:text-primary-600 text-gray-500 transition-all duration-200 interactive-bounce disabled:opacity-50 disabled:cursor-not-allowed" title={openingConsole ? '正在加载控制台...' : '打开站点网页'}>
+                {openingConsole ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
+              </button>
+            ) : null}
             <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-gray-200 text-gray-500 transition-all duration-200 interactive-bounce">
               <Settings size={13} />
             </button>

@@ -29,7 +29,7 @@ pub(crate) const MASTER_KEY_LEN: usize = 32;
 
 /// 机器码缺失或为空时返回的固定错误。
 fn fetch_machine_id() -> Result<String, String> {
-    let raw = machine_uid::get().map_err(|error| format!("读取机器码失败: {}", error))?;
+    let raw = crate::device_id::machine_id()?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("机器码为空，无法派生加密密钥。".to_string());

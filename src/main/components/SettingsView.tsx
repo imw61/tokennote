@@ -1,9 +1,10 @@
 import type { CSSProperties } from 'react'
-import { AlertTriangle, Download, Layers3, Upload } from 'lucide-react'
+import { AlertTriangle, Camera, Download, Layers3, QrCode, Upload } from 'lucide-react'
 import { ConfigTransferDialog } from './ConfigTransferDialog'
 import { SecurityStatusCard } from './SecurityStatusCard'
 import type { AppSettings, PersistenceNotice } from '../types'
 import type { ConfigTransferDialogState } from '../component-props'
+import { isAndroid } from '../../lib/platform'
 import {
   widgetOpacityMax,
   widgetOpacityMin,
@@ -32,6 +33,10 @@ type SettingsViewProps = {
   onCheckUpdate: () => void
   onImportConfig: () => void
   onExportConfig: () => void
+  /** 电脑端：把当前配置加密后展示为二维码 */
+  onExportConfigQr: () => void
+  /** 手机端：开启相机扫描电脑端展示的二维码 */
+  onImportConfigQr: () => void
   onConfigTransferDialogChange: (value: string) => void
   onConfigTransferDialogConfirm: () => void
   onConfigTransferDialogCancel: () => void
@@ -79,10 +84,16 @@ export function SettingsView({
   onCheckUpdate,
   onImportConfig,
   onExportConfig,
+  onExportConfigQr,
+  onImportConfigQr,
   onConfigTransferDialogChange,
   onConfigTransferDialogConfirm,
   onConfigTransferDialogCancel
 }: SettingsViewProps) {
+  // Android 端没有悬浮窗、托盘、开机自启、贴边自动隐藏这些桌面专属能力，
+  // 这里整体把这些设置项隐掉，留下「移动端选项」位置展示安卓专属开关。
+  const showDesktopOnlyOptions = !isAndroid()
+  const showAndroidOnlyOptions = isAndroid()
   return (
     <>
       <div className="flex-1 overflow-auto px-4 pb-4 space-y-3 scrollbar-hide stagger-children">
@@ -127,7 +138,8 @@ export function SettingsView({
 
         <SettingsSection title="窗口与提醒" description="控制悬浮窗显示方式和常用提醒行为">
           <div className="space-y-3">
-            <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+            {showDesktopOnlyOptions ? (
+              <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
               <label className="flex flex-col gap-1.5">
                 <span className="flex items-center justify-between text-[11px] font-bold text-gray-500">
                   <span>悬浮窗透明度</span>
@@ -151,9 +163,11 @@ export function SettingsView({
                 />
               </label>
             </div>
+            ) : null}
 
             <div className="grid grid-cols-1 gap-3">
-              <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50">
+              {showDesktopOnlyOptions ? (
+                <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50">
                 <div className="flex items-center justify-between gap-3">
                   <span className="flex flex-col gap-0.5 text-left">
                     <span className="text-xs font-bold text-gray-600">开机自启动</span>
@@ -171,8 +185,10 @@ export function SettingsView({
                   </label>
                 </div>
               </div>
+              ) : null}
 
-              <label className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50 cursor-pointer select-none">
+              {showDesktopOnlyOptions ? (
+                <label className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50 cursor-pointer select-none">
                 <span className="flex items-center gap-1.5 text-xs font-bold text-gray-600">
                   <Layers3 size={14} />悬浮窗
                 </span>
@@ -187,8 +203,10 @@ export function SettingsView({
                   <span className="pointer-events-none absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 peer-checked:translate-x-4" />
                 </span>
               </label>
+              ) : null}
 
-              <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50">
+              {showDesktopOnlyOptions ? (
+                <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50">
                 <div className="flex items-center justify-between gap-3">
                   <span className="flex flex-col gap-0.5 text-left">
                     <span className="text-xs font-bold text-gray-600">贴边自动隐藏</span>
@@ -206,6 +224,7 @@ export function SettingsView({
                   </label>
                 </div>
               </div>
+              ) : null}
 
               <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50">
                 <div className="flex items-center justify-between gap-3">
@@ -228,6 +247,79 @@ export function SettingsView({
             </div>
           </div>
         </SettingsSection>
+
+        {showAndroidOnlyOptions ? (
+          <SettingsSection title="移动端选项" description="Android 专属：后台刷新与系统通知">
+            <div className="space-y-3">
+              <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex flex-col gap-0.5 text-left">
+                    <span className="text-xs font-bold text-gray-600">后台刷新</span>
+                    <span className="text-[10px] font-semibold text-gray-400">默认开启。开启后 TokenNote 通过前台 Service 在后台轮询站点余额，并保留一条常驻通知</span>
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.androidBackgroundRefreshEnabled !== false}
+                      onChange={event => onChangeSettings({
+                        ...settings,
+                        androidBackgroundRefreshEnabled: event.target.checked
+                      })}
+                      className="sr-only peer"
+                    />
+                    <span className="h-6 w-10 rounded-full bg-gray-200 transition-colors duration-200 peer-checked:bg-primary-500 peer-focus:ring-2 peer-focus:ring-primary-500/25 peer-focus:ring-offset-2 peer-focus:ring-offset-white" />
+                    <span className="pointer-events-none absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 peer-checked:translate-x-4" />
+                  </label>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex flex-col gap-0.5 text-left">
+                    <span className="text-xs font-bold text-gray-600">低余额系统通知</span>
+                    <span className="text-[10px] font-semibold text-gray-400">默认开启。余额首次低于阈值时，会发送一条高优先级系统通知</span>
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.androidLowBalanceNotificationEnabled !== false}
+                      onChange={event => onChangeSettings({
+                        ...settings,
+                        androidLowBalanceNotificationEnabled: event.target.checked
+                      })}
+                      className="sr-only peer"
+                    />
+                    <span className="h-6 w-10 rounded-full bg-gray-200 transition-colors duration-200 peer-checked:bg-primary-500 peer-focus:ring-2 peer-focus:ring-primary-500/25 peer-focus:ring-offset-2 peer-focus:ring-offset-white" />
+                    <span className="pointer-events-none absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 peer-checked:translate-x-4" />
+                  </label>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-all duration-200 hover:bg-gray-50">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex flex-col gap-0.5 text-left">
+                    <span className="text-xs font-bold text-gray-600">强制提醒系统通知</span>
+                    <span className="text-[10px] font-semibold text-gray-400">默认开启。服务端下发新公告时，App 在后台也会发送系统通知</span>
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.androidForceReminderNotificationEnabled !== false}
+                      onChange={event => onChangeSettings({
+                        ...settings,
+                        androidForceReminderNotificationEnabled: event.target.checked
+                      })}
+                      className="sr-only peer"
+                    />
+                    <span className="h-6 w-10 rounded-full bg-gray-200 transition-colors duration-200 peer-checked:bg-primary-500 peer-focus:ring-2 peer-focus:ring-primary-500/25 peer-focus:ring-offset-2 peer-focus:ring-offset-white" />
+                    <span className="pointer-events-none absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 peer-checked:translate-x-4" />
+                  </label>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-amber-200/70 bg-amber-50/60 px-4 py-3 text-[11px] leading-relaxed text-amber-800">
+                若刷新提示被系统抑制，请把 TokenNote 加入电池白名单（厂商系统的「自启动管理」「省电策略」中将本应用设为允许后台运行）。
+              </div>
+            </div>
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection title="数据与安全" description="查看本地状态并导入导出加密配置">
           <div className="space-y-3">
@@ -275,6 +367,23 @@ export function SettingsView({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
+                  {/*
+                    平台分流：
+                    - 电脑端：在原"导入配置"右侧加一个「显示二维码」按钮，把当前配置以二维码循环展示给手机端扫描
+                    - 手机端：在原"导入配置"左侧加一个「扫码导入」按钮，开启相机扫描电脑端展示的二维码
+                    用现有 isAndroid() 做平台判断；按钮文案与"导出配置"等保持同一组视觉。
+                  */}
+                  {showAndroidOnlyOptions ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-amber-900 transition-all duration-200 hover:bg-amber-100 interactive-bounce disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={onImportConfigQr}
+                      disabled={importingConfig || exportingConfig}
+                    >
+                      <Camera size={13} />
+                      扫码导入
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-amber-900 transition-all duration-200 hover:bg-amber-100 interactive-bounce disabled:cursor-not-allowed disabled:opacity-50"
@@ -293,6 +402,17 @@ export function SettingsView({
                     <Download size={13} />
                     {exportingConfig ? '导出中...' : '导出配置'}
                   </button>
+                  {showDesktopOnlyOptions ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-[11px] font-extrabold text-white transition-all duration-200 hover:bg-amber-600 interactive-bounce disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={onExportConfigQr}
+                      disabled={importingConfig || exportingConfig || stationCount === 0}
+                    >
+                      <QrCode size={13} />
+                      显示二维码
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </div>

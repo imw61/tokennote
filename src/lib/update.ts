@@ -3,6 +3,7 @@
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { fetchWithTimeout } from './fetch-with-timeout'
+import { getSourceLabel } from './platform'
 import { validateExternalUrl } from './safe-external-url'
 
 export type UpdateManifest = {
@@ -140,7 +141,9 @@ async function resolveMachineUuid(): Promise<string> {
 function appendManifestRequestMetadata(manifestUrl: string, currentVersion: string, machineUuid: string) {
   const url = new URL(manifestUrl)
   url.searchParams.set('clientVersion', currentVersion)
-  url.searchParams.set('source', 'desktop')
+  // source 上报具体平台:windows / macos / linux / android / ios。
+  // 后端按这个字段做版本分布与下发策略,字符串透传记录,不做白名单。
+  url.searchParams.set('source', getSourceLabel())
   if (machineUuid) {
     url.searchParams.set('machineUuid', machineUuid)
   }
