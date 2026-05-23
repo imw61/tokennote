@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef } from 'react'
+import React, { useLayoutEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { LogicalSize } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
@@ -13,30 +13,14 @@ const noticeWindowWidth = 400
 const minNoticeWindowHeight = 300
 const maxNoticeWindowHeight = 600
 const outerPaddingHeight = 16
-const STORAGE_KEY = 'tokennote.securityNoticeShown'
 
 async function closeWindow() {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, 'true')
-  } catch {
-    // ignore
-  }
-  await invoke('hide_security_notice_window').catch(console.error)
+  await invoke('acknowledge_security_notice').catch(console.error)
 }
 
 function SecurityNoticeApp() {
   const appWindow = getCurrentWindow()
   const cardRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    try {
-      if (window.localStorage.getItem(STORAGE_KEY)) {
-        void invoke('hide_security_notice_window').catch(console.error)
-      }
-    } catch {
-      // ignore
-    }
-  }, [])
 
   const dragWindow = (event: React.MouseEvent<HTMLElement>) => {
     if (event.button !== 0) return

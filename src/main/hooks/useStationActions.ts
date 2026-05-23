@@ -20,6 +20,7 @@ export function useStationActions({
   onStationRemoved
 }: UseStationActionsOptions) {
   const [loading, setLoading] = useState(false)
+  const [openingConsoleId, setOpeningConsoleId] = useState<string | null>(null)
 
   const totals = useMemo<OverviewTotals>(() => {
     let requests = 0
@@ -93,7 +94,12 @@ export function useStationActions({
       if (!confirmed) return
       trustConsoleOrigin(origin)
     }
-    await invoke('open_station_console', { id })
+    setOpeningConsoleId(id)
+    try {
+      await invoke('open_station_console', { id })
+    } finally {
+      setOpeningConsoleId(null)
+    }
   }
 
   const saveSettings = async (settings: AppSettings) => {
@@ -127,6 +133,7 @@ export function useStationActions({
 
   return {
     loading,
+    openingConsoleId,
     totals,
     refreshAll,
     refreshOne,

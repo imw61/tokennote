@@ -78,6 +78,7 @@ export type MainPanelsProps = {
   onConfigTransferDialogChange: (value: string) => void
   onConfigTransferDialogConfirm: () => void
   onConfigTransferDialogCancel: () => void
+  openingConsoleId: string | null
   onBackToOverview: () => void
   onRefreshStation: (id: string) => void
   onOpenConsole: (id: string) => void
@@ -102,6 +103,7 @@ export type StationFormLayerProps = {
   setFormTab: Dispatch<SetStateAction<StationFormTab>>
   detectingType: boolean
   detectedType: StationTypeDetectionState
+  unsupportedDetectedType: string
   setDetectedType: Dispatch<SetStateAction<StationTypeDetectionState>>
   setDraft: Dispatch<SetStateAction<Station>>
   formError: string

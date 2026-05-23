@@ -21,6 +21,7 @@ export type Station = {
 export type AppSettings = {
   globalRefreshIntervalSec: number
   alwaysOnTop: boolean
+  autoLaunchEnabled: boolean
   widgetEnabled: boolean
   widgetAutoHideEnabled: boolean
   lowBalancePopupEnabled: boolean
@@ -90,7 +91,7 @@ export type AppData = {
   localStationReviews: LocalStationReviewRecord[]
 }
 
-export type StationTypeDetectionState = 'idle' | 'newapi' | 'sub2api' | 'unknown'
+export type StationTypeDetectionState = 'idle' | 'newapi' | 'sub2api' | 'unsupported' | 'unknown'
 
 export type StationFormTab = 'relay' | 'provider'
 

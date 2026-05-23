@@ -10,6 +10,10 @@ fn default_widget_enabled() -> bool {
     true
 }
 
+fn default_auto_launch_enabled() -> bool {
+    true
+}
+
 fn default_low_balance_popup_enabled() -> bool {
     false
 }
@@ -50,6 +54,8 @@ pub struct Station {
 pub struct AppSettings {
     pub global_refresh_interval_sec: u64,
     pub always_on_top: bool,
+    #[serde(default = "default_auto_launch_enabled")]
+    pub auto_launch_enabled: bool,
     #[serde(default = "default_widget_enabled")]
     pub widget_enabled: bool,
     #[serde(default = "default_widget_auto_hide_enabled")]
@@ -66,8 +72,9 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            global_refresh_interval_sec: 60,
+            global_refresh_interval_sec: 180,
             always_on_top: true,
+            auto_launch_enabled: default_auto_launch_enabled(),
             widget_enabled: true,
             widget_auto_hide_enabled: default_widget_auto_hide_enabled(),
             low_balance_popup_enabled: default_low_balance_popup_enabled(),
@@ -176,9 +183,13 @@ pub struct AppData {
     pub settings: AppSettings,
     pub snapshots: Vec<BalanceSnapshot>,
     #[serde(default)]
+    pub security_notice_acknowledged: bool,
+    #[serde(default)]
     pub balance_history: Vec<BalanceHistoryPoint>,
     #[serde(default)]
     pub local_station_reviews: Vec<LocalStationReviewRecord>,
+    #[serde(default)]
+    pub read_force_reminder_updated_ats: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,8 +214,10 @@ impl Default for AppData {
             stations: Vec::new(),
             settings: AppSettings::default(),
             snapshots: Vec::new(),
+            security_notice_acknowledged: false,
             balance_history: Vec::new(),
             local_station_reviews: Vec::new(),
+            read_force_reminder_updated_ats: Vec::new(),
         }
     }
 }
@@ -215,7 +228,9 @@ pub(crate) struct AppState {
     pub(crate) data: SharedData,
     pub(crate) data_path: PathBuf,
     pub(crate) persistence_notice: Arc<Mutex<Option<PersistenceNotice>>>,
+    pub(crate) update_window_payload: Arc<Mutex<Option<UpdateWindowPayload>>>,
     pub(crate) low_balance_alert_payload: Arc<Mutex<Option<LowBalanceAlertPayload>>>,
+    pub(crate) force_reminder_payload: Arc<Mutex<Option<ForceReminderPayload>>>,
     pub(crate) low_balance_alerted_station_ids: Arc<Mutex<HashSet<String>>>,
 }
 
@@ -239,6 +254,8 @@ pub(crate) struct NewApiLoginOutput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DetectStationTypeResult {
     pub(crate) station_type: String,
+    pub(crate) label: String,
+    pub(crate) min_client_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +276,15 @@ pub(crate) struct UpdateWindowPayload {
 pub(crate) struct LowBalanceAlertPayload {
     pub(crate) items: Vec<LowBalanceAlertItem>,
     pub(crate) total_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ForceReminderPayload {
+    pub(crate) content: String,
+    pub(crate) mode: String,
+    pub(crate) r#type: String,
+    pub(crate) updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

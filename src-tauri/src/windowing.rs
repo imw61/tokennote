@@ -5,7 +5,7 @@ use tauri::{
 
 use crate::{
     data::{normalize_bearer_token, normalize_url},
-    models::{LowBalanceAlertPayload, UpdateWindowPayload},
+    models::{ForceReminderPayload, LowBalanceAlertPayload, UpdateWindowPayload},
     security::validate_http_url,
 };
 
@@ -145,6 +145,150 @@ pub(crate) fn deepseek_console_script(base_url: &str, user_token: &str) -> Resul
     ))
 }
 
+pub(crate) fn external_link_guard_script(
+    station_origin: &str,
+    station_name: &str,
+) -> Result<String, String> {
+    let origin = json_string_literal(station_origin)?;
+    let name = json_string_literal(station_name)?;
+    Ok(format!(
+        r#"
+(() => {{
+  const __TN_ORIGIN = {origin};
+  const __TN_NAME = {name};
+  let __TN_FORM_NAV = false;
+
+  function isSameOrigin(url) {{
+    try {{
+      return new URL(url, window.location.href).origin === __TN_ORIGIN;
+    }} catch {{ return false; }}
+  }}
+
+  function isNavigable(url) {{
+    try {{
+      const u = new URL(url, window.location.href);
+      return u.protocol === 'https:' || u.protocol === 'http:';
+    }} catch {{ return false; }}
+  }}
+
+  function requestOpen(url, reason) {{
+    if (!isNavigable(url)) return;
+    if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
+      window.__TAURI_INTERNALS__.invoke('confirm_open_external_url', {{
+        url: url,
+        stationName: __TN_NAME,
+        reason: reason
+      }}).catch(function() {{}});
+    }}
+  }}
+
+  window.open = function(url, target) {{
+    if (url && !isSameOrigin(url)) {{
+      __TN_FORM_NAV = true;
+      setTimeout(function() {{ __TN_FORM_NAV = false; }}, 1000);
+      window.location.href = url;
+    }} else if (url && isSameOrigin(url)) {{
+      window.location.href = url;
+    }}
+    return null;
+  }};
+
+  const origSubmit = HTMLFormElement.prototype.submit;
+  HTMLFormElement.prototype.submit = function() {{
+    const action = this.getAttribute('action') || '';
+    if (action && !isSameOrigin(action)) {{
+      __TN_FORM_NAV = true;
+      if (this.target === '_blank') {{
+        this.target = '_self';
+      }}
+      setTimeout(function() {{ __TN_FORM_NAV = false; }}, 1000);
+    }}
+    return origSubmit.call(this);
+  }};
+
+  document.addEventListener('submit', function(e) {{
+    const form = e.target;
+    if (!form || form.tagName !== 'FORM') return;
+    const action = form.getAttribute('action') || '';
+    if (action && !isSameOrigin(action)) {{
+      __TN_FORM_NAV = true;
+      if (form.target === '_blank') {{
+        form.target = '_self';
+      }}
+      setTimeout(function() {{ __TN_FORM_NAV = false; }}, 1000);
+    }}
+  }}, true);
+
+  document.addEventListener('click', function(e) {{
+    const a = e.target.closest ? e.target.closest('a') : null;
+    if (!a) return;
+    const href = a.getAttribute('href');
+    if (!href) return;
+    if (a.target === '_blank' || !isSameOrigin(href)) {{
+      e.preventDefault();
+      e.stopPropagation();
+      requestOpen(new URL(href, window.location.href).href,
+        a.target === '_blank' ? 'target_blank' : 'cross_origin');
+    }}
+  }}, true);
+
+  document.addEventListener('auxclick', function(e) {{
+    if (e.button !== 1) return;
+    const a = e.target.closest ? e.target.closest('a') : null;
+    if (!a) return;
+    const href = a.getAttribute('href');
+    if (!href) return;
+    if (a.target === '_blank' || !isSameOrigin(href)) {{
+      e.preventDefault();
+      e.stopPropagation();
+      requestOpen(new URL(href, window.location.href).href,
+        a.target === '_blank' ? 'target_blank' : 'cross_origin');
+    }}
+  }}, true);
+
+  const origAssign = window.location.assign.bind(window.location);
+  const origReplace = window.location.replace.bind(window.location);
+
+  window.location.assign = function(url) {{
+    if (__TN_FORM_NAV || isSameOrigin(url)) {{
+      origAssign(url);
+    }} else {{
+      requestOpen(new URL(url, window.location.href).href, 'cross_origin');
+    }}
+  }};
+
+  window.location.replace = function(url) {{
+    if (__TN_FORM_NAV || isSameOrigin(url)) {{
+      origReplace(url);
+    }} else {{
+      requestOpen(new URL(url, window.location.href).href, 'cross_origin');
+    }}
+  }};
+
+  try {{
+    const locProto = Object.getPrototypeOf(window.location);
+    const hrefDesc = Object.getOwnPropertyDescriptor(locProto, 'href') ||
+                     Object.getOwnPropertyDescriptor(window.location, 'href');
+    if (hrefDesc && hrefDesc.set) {{
+      const origSet = hrefDesc.set;
+      Object.defineProperty(window.location, 'href', {{
+        get: hrefDesc.get ? hrefDesc.get.bind(window.location) : function() {{ return window.location.href; }},
+        set: function(url) {{
+          if (__TN_FORM_NAV || isSameOrigin(url)) {{
+            origSet.call(window.location, url);
+          }} else {{
+            requestOpen(new URL(url, window.location.href).href, 'cross_origin');
+          }}
+        }},
+        configurable: true
+      }});
+    }}
+  }} catch (e) {{}}
+}})();
+"#
+    ))
+}
+
 pub(crate) fn open_console_webview(
     app: &AppHandle,
     label: &str,
@@ -205,7 +349,13 @@ fn main_window_is_visible(app: &AppHandle) -> bool {
 
 #[cfg(target_os = "macos")]
 fn should_keep_macos_dock_visible(app: &AppHandle) -> bool {
-    ["main", "update", "low-balance-alert", "security-notice"]
+    [
+        "main",
+        "update",
+        "low-balance-alert",
+        "security-notice",
+        "force-reminder",
+    ]
         .iter()
         .any(|label| window_is_visible(app, label))
 }
@@ -357,10 +507,14 @@ pub(crate) fn show_update_window_internal(
     set_macos_dock_visible(true)?;
     let _ = app.emit("update-popup-data", payload);
     if let Some(window) = app.get_webview_window("update") {
+        activate_macos_app()?;
         let _ = window.unminimize();
         let _ = window.center();
+        let _ = restore_macos_window(&window);
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
+    } else {
+        activate_macos_app()?;
     }
     Ok(())
 }
@@ -417,6 +571,33 @@ pub(crate) fn show_security_notice_window_internal(app: &AppHandle) -> Result<()
 
 pub(crate) fn hide_security_notice_window_internal(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("security-notice") {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    if !should_keep_macos_dock_visible(app) {
+        set_macos_dock_visible(false)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn show_force_reminder_window_internal(
+    app: &AppHandle,
+    payload: ForceReminderPayload,
+) -> Result<(), String> {
+    ensure_macos_app_icon()?;
+    set_macos_dock_visible(true)?;
+    let _ = app.emit("force-reminder-data", payload);
+    if let Some(window) = app.get_webview_window("force-reminder") {
+        let _ = window.unminimize();
+        let _ = window.center();
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn hide_force_reminder_window_internal(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("force-reminder") {
         window.hide().map_err(|error| error.to_string())?;
     }
     #[cfg(target_os = "macos")]

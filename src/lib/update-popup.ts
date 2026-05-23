@@ -15,7 +15,6 @@ export type UpdatePopupPayload = {
 }
 
 const ignoredUpdateVersionStorageKey = 'tokennote.ignoredUpdateVersion'
-const updatePopupPayloadStorageKey = 'tokennote.updatePopupPayload'
 
 export function getIgnoredUpdateVersion() {
   try {
@@ -58,29 +57,50 @@ export function buildUpdatePopupPayload(result: UpdateCheckResult): UpdatePopupP
   }
 }
 
-export function getStoredUpdatePopupPayload() {
+export async function getActiveUpdatePopupPayload() {
   try {
-    const raw = window.localStorage.getItem(updatePopupPayloadStorageKey)
-    return raw ? JSON.parse(raw) as UpdatePopupPayload : null
+    return await invoke<UpdatePopupPayload | null>('get_update_window_payload')
   } catch {
     return null
   }
 }
 
 export async function showUpdatePopup(payload: UpdatePopupPayload) {
-  try {
-    window.localStorage.setItem(updatePopupPayloadStorageKey, JSON.stringify(payload))
-  } catch {
-    // Ignore storage failures and keep event-driven behavior best-effort.
-  }
   await invoke('show_update_window', { payload })
 }
 
-export async function hideUpdatePopup() {
-  try {
-    window.localStorage.removeItem(updatePopupPayloadStorageKey)
-  } catch {
-    // Ignore storage failures and keep hide behavior best-effort.
+export async function hideUpdatePopup(allowRequired = false) {
+  await invoke('hide_update_window', { allowRequired })
+}
+
+export async function syncUpdatePopup(result: UpdateCheckResult, ignoredVersion: string | null) {
+  const activePayload = await getActiveUpdatePopupPayload()
+  const hasRequiredPopup = activePayload?.mode === 'required'
+  const nextPayload = buildUpdatePopupPayload(result)
+
+  if (!nextPayload) {
+    const latestActivePayload = await getActiveUpdatePopupPayload()
+    if (latestActivePayload?.mode === 'required') {
+      return latestActivePayload
+    }
+    await hideUpdatePopup()
+    return null
   }
-  await invoke('hide_update_window')
+
+  if (nextPayload.mode === 'available' && ignoredVersion === nextPayload.latestVersion) {
+    const latestActivePayload = await getActiveUpdatePopupPayload()
+    if (latestActivePayload?.mode === 'required') {
+      return latestActivePayload
+    }
+    await hideUpdatePopup()
+    return null
+  }
+
+  const latestActivePayload = hasRequiredPopup ? activePayload : await getActiveUpdatePopupPayload()
+  if (latestActivePayload?.mode === 'required' && nextPayload.mode !== 'required') {
+    return latestActivePayload
+  }
+
+  await showUpdatePopup(nextPayload)
+  return nextPayload
 }

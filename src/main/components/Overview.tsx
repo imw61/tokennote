@@ -319,7 +319,7 @@ function StationDragPreview({ station, snapshot }: { station: Station; snapshot?
       </div>
 
       {failed ? (
-        <div className="px-3 py-2 rounded-xl bg-red-100/80 border border-red-200 text-[11px] font-semibold text-red-600">
+        <div className="px-3 py-2 rounded-xl bg-red-100/80 border border-red-200 text-[10px] font-semibold text-red-600">
           {snapshot!.errorMessage}
         </div>
       ) : null}
@@ -509,7 +509,7 @@ function StationCard({
       </div>
 
       {failed ? (
-        <div className="px-3 py-2 rounded-xl bg-red-100/80 border border-red-200 text-[11px] font-semibold text-red-600">
+        <div className="px-3 py-2 rounded-xl bg-red-100/80 border border-red-200 text-[10px] font-semibold text-red-600">
           {snapshot!.errorMessage}
         </div>
       ) : null}

@@ -9,11 +9,14 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
 mod data;
+mod force_reminder;
 mod key_derivation;
 mod key_storage;
 mod models;
@@ -21,6 +24,7 @@ mod providers;
 mod refresh;
 mod secure_storage;
 mod security;
+mod update_check;
 mod windowing;
 
 pub use data::{endpoint, fetch_json, normalize_bearer_token, normalize_url, now_ts};
@@ -35,8 +39,8 @@ use data::{
 };
 use models::{
     normalize_refresh_concurrency, AppDataImport, AppState, DetectStationTypeResult,
-    LowBalanceAlertPayload, NewApiLoginInput, NewApiLoginOutput, SaveStationReviewRecordInput,
-    UpdateWindowPayload,
+    ForceReminderPayload, LowBalanceAlertPayload, NewApiLoginInput, NewApiLoginOutput,
+    SaveStationReviewRecordInput, UpdateWindowPayload,
 };
 use refresh::{
     apply_station_refresh_result, build_low_balance_alert_payload, ensure_station_credentials,
@@ -46,14 +50,136 @@ use refresh::{
 use security::normalize_station_base_url;
 use windowing::{
     apply_always_on_top, apply_widget_visibility, deepseek_console_base_url,
-    deepseek_console_script, hide_low_balance_alert_window_internal, hide_main_window_internal,
+    deepseek_console_script, external_link_guard_script,
+    hide_force_reminder_window_internal,
+    hide_low_balance_alert_window_internal, hide_main_window_internal,
     hide_security_notice_window_internal, hide_update_window_internal, load_tray_icon,
     minimize_main_window_internal, newapi_console_script, open_console_webview,
-    show_main_window_internal, show_security_notice_window_internal, show_update_window_internal,
-    station_console_label, sub2api_console_script,
+    show_force_reminder_window_internal, show_main_window_internal,
+    show_security_notice_window_internal, show_update_window_internal, station_console_label,
+    sub2api_console_script,
 };
 #[cfg(target_os = "macos")]
 use windowing::{clear_ns_window_background, ensure_macos_app_icon, sync_macos_dock_visibility};
+
+async fn show_startup_force_reminder(app_handle: &AppHandle) {
+    let Some(payload) = force_reminder::fetch_active_force_reminder().await else {
+        return;
+    };
+
+    if payload.mode == "once" {
+        let already_read = {
+            let state = app_handle.state::<AppState>();
+            let data = state.data.lock().await;
+            payload
+                .updated_at
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|updated_at| {
+                    data.read_force_reminder_updated_ats
+                        .iter()
+                        .any(|item| item == updated_at)
+                })
+                .unwrap_or(false)
+        };
+        if already_read {
+            return;
+        }
+    }
+
+    for _ in 0..20 {
+        let notice_visible = app_handle
+            .get_webview_window("security-notice")
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false);
+        if !notice_visible {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+
+    let state = app_handle.state::<AppState>();
+    *state.force_reminder_payload.lock().await = Some(payload.clone());
+    let _ = show_force_reminder_window_on_main_thread(app_handle, payload);
+}
+
+async fn set_active_update_window_payload(
+    app: &AppHandle,
+    payload: Option<UpdateWindowPayload>,
+) {
+    let state = app.state::<AppState>();
+    *state.update_window_payload.lock().await = payload;
+}
+
+fn show_update_window_on_main_thread(
+    app: &AppHandle,
+    payload: UpdateWindowPayload,
+) -> Result<(), String> {
+    let app_handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(error) = show_update_window_internal(&app_handle, payload) {
+            eprintln!("展示更新窗口失败: {}", error);
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn show_security_notice_window_on_main_thread(app: &AppHandle) -> Result<(), String> {
+    let app_handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(error) = show_security_notice_window_internal(&app_handle) {
+            eprintln!("展示数据安全提示窗口失败: {}", error);
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn show_force_reminder_window_on_main_thread(
+    app: &AppHandle,
+    payload: ForceReminderPayload,
+) -> Result<(), String> {
+    let app_handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(error) = show_force_reminder_window_internal(&app_handle, payload) {
+            eprintln!("展示强制提醒窗口失败: {}", error);
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn hide_update_window_on_main_thread(app: &AppHandle) -> Result<(), String> {
+    let app_handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(error) = hide_update_window_internal(&app_handle) {
+            eprintln!("隐藏更新窗口失败: {}", error);
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
+async fn run_startup_window_sequence(app_handle: AppHandle, security_notice_acknowledged: bool) {
+    let security_notice_due_at = tokio::time::Instant::now() + Duration::from_millis(800);
+    let force_reminder_due_at = tokio::time::Instant::now() + Duration::from_millis(1200);
+
+    match update_check::fetch_required_update_payload(&app_handle).await {
+        Ok(Some(payload)) => {
+            set_active_update_window_payload(&app_handle, Some(payload.clone())).await;
+            let _ = show_update_window_on_main_thread(&app_handle, payload);
+            return;
+        }
+        Ok(None) => {}
+        Err(error) => eprintln!("启动时检查强制更新失败: {}", error),
+    }
+
+    if !security_notice_acknowledged {
+        tokio::time::sleep_until(security_notice_due_at).await;
+        let _ = show_security_notice_window_on_main_thread(&app_handle);
+    }
+
+    tokio::time::sleep_until(force_reminder_due_at).await;
+    show_startup_force_reminder(&app_handle).await;
+}
 
 #[tauri::command]
 async fn get_app_data(state: State<'_, AppState>) -> Result<AppData, String> {
@@ -67,6 +193,30 @@ async fn get_persistence_notice(
     Ok(state.persistence_notice.lock().await.clone())
 }
 
+fn sync_auto_launch(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let manager = app.autolaunch();
+        let current_enabled = manager.is_enabled().map_err(|error| error.to_string())?;
+        if current_enabled != enabled {
+            if enabled {
+                manager.enable().map_err(|error| error.to_string())?;
+            } else {
+                manager.disable().map_err(|error| error.to_string())?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_runtime_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
+    apply_always_on_top(app, settings.always_on_top)?;
+    apply_widget_visibility(app, settings.widget_enabled)?;
+    sync_auto_launch(app, settings.auto_launch_enabled)?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn import_app_data(
     input: AppDataImport,
@@ -74,14 +224,23 @@ async fn import_app_data(
     app: AppHandle,
 ) -> Result<AppData, String> {
     let imported = normalize_imported_data(input)?;
+    let previous_data = state.data.lock().await.clone();
+
+    if let Err(error) = apply_runtime_settings(&app, &imported.settings) {
+        let _ = apply_runtime_settings(&app, &previous_data.settings);
+        return Err(error);
+    }
+
+    if let Err(error) = persist_data(&state.data_path, &imported) {
+        let _ = apply_runtime_settings(&app, &previous_data.settings);
+        return Err(error);
+    }
+
     {
         let mut data = state.data.lock().await;
         *data = imported.clone();
-        persist_data(&state.data_path, &data)?;
     }
     *state.persistence_notice.lock().await = None;
-    let _ = apply_always_on_top(&app, imported.settings.always_on_top);
-    let _ = apply_widget_visibility(&app, imported.settings.widget_enabled);
     let _ = app.emit("stations-changed", ());
     Ok(imported)
 }
@@ -104,14 +263,78 @@ async fn detect_station_type(base_url: String) -> Result<DetectStationTypeResult
         Err(_) => {
             return Ok(DetectStationTypeResult {
                 station_type: "unknown".to_string(),
+                label: "未知".to_string(),
+                min_client_version: None,
             });
         }
     };
     if normalized.is_empty() {
         return Ok(DetectStationTypeResult {
             station_type: "unknown".to_string(),
+            label: "未知".to_string(),
+            min_client_version: None,
         });
     }
+
+    // 优先调用云端识别
+    if let Some(result) = detect_station_type_cloud(&normalized).await {
+        return Ok(result);
+    }
+
+    // 云端失败时降级到本地识别
+    detect_station_type_local(&normalized).await
+}
+
+async fn detect_station_type_cloud(base_url: &str) -> Option<DetectStationTypeResult> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .ok()?;
+
+    let machine_uuid = machine_uid::get().unwrap_or_default();
+    let current_version = env!("CARGO_PKG_VERSION");
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CloudDetectPayload {
+        #[serde(rename = "type")]
+        station_type: String,
+        label: String,
+        min_client_version: Option<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CloudDetectResponse {
+        data: CloudDetectPayload,
+    }
+
+    let resp = client
+        .post("https://update.tokennote.dev/public/station-detect")
+        .header("content-type", "application/json")
+        .json(&serde_json::json!({
+            "baseUrl": base_url,
+            "clientVersion": current_version,
+            "source": "desktop",
+            "machineUuid": machine_uuid
+        }))
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let data: CloudDetectResponse = resp.json().await.ok()?;
+
+    Some(DetectStationTypeResult {
+        station_type: data.data.station_type,
+        label: data.data.label,
+        min_client_version: data.data.min_client_version,
+    })
+}
+
+async fn detect_station_type_local(base_url: &str) -> Result<DetectStationTypeResult, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .build()
@@ -120,15 +343,16 @@ async fn detect_station_type(base_url: String) -> Result<DetectStationTypeResult
     let candidates = [
         (
             "sub2api",
+            "Sub2API",
             format!(
                 "{}/api/v1/settings/public?timezone=Asia%2FShanghai",
-                normalized
+                base_url
             ),
         ),
-        ("newapi", format!("{}/api/status", normalized)),
+        ("newapi", "NewAPI", format!("{}/api/status", base_url)),
     ];
 
-    for (kind, url) in candidates {
+    for (kind, label, url) in candidates {
         let resp = match client
             .get(&url)
             .header("accept", "application/json, text/plain, */*")
@@ -155,6 +379,8 @@ async fn detect_station_type(base_url: String) -> Result<DetectStationTypeResult
             if code_ok && has_data {
                 return Ok(DetectStationTypeResult {
                     station_type: "sub2api".to_string(),
+                    label: label.to_string(),
+                    min_client_version: None,
                 });
             }
             continue;
@@ -164,6 +390,8 @@ async fn detect_station_type(base_url: String) -> Result<DetectStationTypeResult
             if value.get("data").is_some() {
                 return Ok(DetectStationTypeResult {
                     station_type: "newapi".to_string(),
+                    label: label.to_string(),
+                    min_client_version: None,
                 });
             }
             continue;
@@ -172,6 +400,8 @@ async fn detect_station_type(base_url: String) -> Result<DetectStationTypeResult
 
     Ok(DetectStationTypeResult {
         station_type: "unknown".to_string(),
+        label: "未知".to_string(),
+        min_client_version: None,
     })
 }
 
@@ -185,11 +415,21 @@ async fn save_settings(
         refresh_concurrency: normalize_refresh_concurrency(settings.refresh_concurrency) as u64,
         ..settings
     };
-    apply_always_on_top(&app, normalized_settings.always_on_top)?;
-    apply_widget_visibility(&app, normalized_settings.widget_enabled)?;
+    let previous_data = state.data.lock().await.clone();
+    if let Err(error) = apply_runtime_settings(&app, &normalized_settings) {
+        let _ = apply_runtime_settings(&app, &previous_data.settings);
+        return Err(error);
+    }
+
+    let mut next_data = previous_data.clone();
+    next_data.settings = normalized_settings.clone();
+    if let Err(error) = persist_data(&state.data_path, &next_data) {
+        let _ = apply_runtime_settings(&app, &previous_data.settings);
+        return Err(error);
+    }
+
     let mut data = state.data.lock().await;
-    data.settings = normalized_settings.clone();
-    persist_data(&state.data_path, &data)?;
+    *data = next_data;
     let _ = app.emit("settings-updated", normalized_settings);
     Ok(data.clone())
 }
@@ -442,16 +682,26 @@ async fn open_station_console(
         "" | "newapi" => {
             let prepared_station = ensure_station_credentials(&station).await?;
             let web_session = providers::build_newapi_web_session(&prepared_station).await?;
-            let script = newapi_console_script(
-                &prepared_station.base_url,
-                &sanitize_cookie(&web_session.cookie),
-                &web_session.new_api_user,
-                &web_session.user_json,
-                &web_session.status_json,
-                &web_session.quota_display_type,
-                &web_session.quota_per_unit,
-                &web_session.system_name,
-            )?;
+            let station_origin = normalize_url(&prepared_station.base_url);
+            let station_display_name = if prepared_station.name.trim().is_empty() {
+                station_origin.clone()
+            } else {
+                prepared_station.name.clone()
+            };
+            let script = format!(
+                "{}{}",
+                newapi_console_script(
+                    &prepared_station.base_url,
+                    &sanitize_cookie(&web_session.cookie),
+                    &web_session.new_api_user,
+                    &web_session.user_json,
+                    &web_session.status_json,
+                    &web_session.quota_display_type,
+                    &web_session.quota_per_unit,
+                    &web_session.system_name,
+                )?,
+                external_link_guard_script(&station_origin, &station_display_name)?
+            );
             {
                 let mut data = state.data.lock().await;
                 if let Some(existing) = data
@@ -515,13 +765,23 @@ async fn open_station_console(
                 .await?
             };
 
-            let script = sub2api_console_script(
-                &prepared_station.base_url,
-                &web_session.auth_token,
-                &web_session.auth_user_json,
-                &web_session.refresh_token,
-                web_session.token_expires_at,
-            )?;
+            let station_origin = normalize_url(&prepared_station.base_url);
+            let station_display_name = if prepared_station.name.trim().is_empty() {
+                station_origin.clone()
+            } else {
+                prepared_station.name.clone()
+            };
+            let script = format!(
+                "{}{}",
+                sub2api_console_script(
+                    &prepared_station.base_url,
+                    &web_session.auth_token,
+                    &web_session.auth_user_json,
+                    &web_session.refresh_token,
+                    web_session.token_expires_at,
+                )?,
+                external_link_guard_script(&station_origin, &station_display_name)?
+            );
             let title = if prepared_station.name.trim().is_empty() {
                 "TokenNote Dashboard".to_string()
             } else {
@@ -541,6 +801,12 @@ async fn open_station_console(
                 return Err("DeepSeek 快捷登录仅支持账号密码登录模式；当前手动凭证 / API Key 模式只能用于接口请求，不能直接登录网页控制台。".to_string());
             }
             let console_base_url = deepseek_console_base_url();
+            let station_origin = normalize_url(console_base_url);
+            let station_display_name = if prepared_station.name.trim().is_empty() {
+                station_origin.clone()
+            } else {
+                prepared_station.name.clone()
+            };
             {
                 let mut data = state.data.lock().await;
                 if let Some(existing) = data
@@ -557,7 +823,11 @@ async fn open_station_console(
                 }
                 persist_data(&state.data_path, &data)?;
             }
-            let script = deepseek_console_script(console_base_url, &prepared_station.cookie)?;
+            let script = format!(
+                "{}{}",
+                deepseek_console_script(console_base_url, &prepared_station.cookie)?,
+                external_link_guard_script(&station_origin, &station_display_name)?
+            );
             let title = if prepared_station.name.trim().is_empty() {
                 "TokenNote DeepSeek".to_string()
             } else {
@@ -576,6 +846,46 @@ async fn open_station_console(
 
     minimize_main_window_internal(&app)?;
 
+    Ok(())
+}
+
+#[tauri::command]
+async fn confirm_open_external_url(
+    url: String,
+    station_name: String,
+    reason: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    let trimmed = url.trim();
+    let parsed = crate::security::validate_http_url(trimmed, true)?;
+    let display_url = parsed.as_str().to_string();
+    let reason_text = match reason.as_str() {
+        "window.open" => "弹出新窗口",
+        "target_blank" => "新标签页链接",
+        "cross_origin" => "跨域跳转",
+        _ => "外部链接",
+    };
+    let message = format!(
+        "来源：{}\n类型：{}\n目标：{}\n\n是否使用系统浏览器打开此链接？",
+        station_name, reason_text, display_url
+    );
+    let title = format!("{} · 外部链接确认", station_name);
+    let confirmed = app
+        .dialog()
+        .message(message)
+        .title(title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "使用浏览器打开".to_string(),
+            "取消".to_string(),
+        ))
+        .blocking_show();
+    if confirmed {
+        tauri_plugin_opener::open_url(&display_url, None::<&str>)
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -621,12 +931,36 @@ async fn hide_main_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn show_update_window(app: AppHandle, payload: UpdateWindowPayload) -> Result<(), String> {
-    show_update_window_internal(&app, payload)
+    set_active_update_window_payload(&app, Some(payload.clone())).await;
+    show_update_window_on_main_thread(&app, payload)
 }
 
 #[tauri::command]
-async fn hide_update_window(app: AppHandle) -> Result<(), String> {
-    hide_update_window_internal(&app)
+async fn hide_update_window(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    allow_required: Option<bool>,
+) -> Result<(), String> {
+    let allow_required = allow_required.unwrap_or(false);
+    if !allow_required {
+        let active_payload = state.update_window_payload.lock().await.clone();
+        if active_payload
+            .as_ref()
+            .map(|payload| payload.mode == "required")
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+    }
+    set_active_update_window_payload(&app, None).await;
+    hide_update_window_on_main_thread(&app)
+}
+
+#[tauri::command]
+async fn get_update_window_payload(
+    state: State<'_, AppState>,
+) -> Result<Option<UpdateWindowPayload>, String> {
+    Ok(state.update_window_payload.lock().await.clone())
 }
 
 #[tauri::command]
@@ -634,6 +968,13 @@ async fn get_low_balance_alert_payload(
     state: State<'_, AppState>,
 ) -> Result<Option<LowBalanceAlertPayload>, String> {
     Ok(state.low_balance_alert_payload.lock().await.clone())
+}
+
+#[tauri::command]
+async fn get_force_reminder_payload(
+    state: State<'_, AppState>,
+) -> Result<Option<ForceReminderPayload>, String> {
+    Ok(state.force_reminder_payload.lock().await.clone())
 }
 
 #[tauri::command]
@@ -648,6 +989,72 @@ async fn hide_low_balance_alert_window(
 #[tauri::command]
 async fn hide_security_notice_window(app: AppHandle) -> Result<(), String> {
     hide_security_notice_window_internal(&app)
+}
+
+#[tauri::command]
+async fn acknowledge_security_notice(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let mut data = state.data.lock().await;
+    if !data.security_notice_acknowledged {
+        data.security_notice_acknowledged = true;
+        persist_data(&state.data_path, &data)?;
+    }
+    drop(data);
+    hide_security_notice_window_internal(&app)
+}
+
+#[tauri::command]
+async fn hide_force_reminder_window(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    *state.force_reminder_payload.lock().await = None;
+    hide_force_reminder_window_internal(&app)
+}
+
+#[tauri::command]
+async fn acknowledge_force_reminder(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let payload = state.force_reminder_payload.lock().await.clone();
+
+    if let Some(payload) = payload {
+        if payload.mode == "once" {
+            if let Some(updated_at) = payload
+                .updated_at
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                let mut data = state.data.lock().await;
+                let exists = data
+                    .read_force_reminder_updated_ats
+                    .iter()
+                    .any(|item| item == updated_at);
+                if !exists {
+                    data.read_force_reminder_updated_ats
+                        .push(updated_at.to_string());
+                    if data.read_force_reminder_updated_ats.len() > 100 {
+                        let overflow = data.read_force_reminder_updated_ats.len() - 100;
+                        data.read_force_reminder_updated_ats.drain(0..overflow);
+                    }
+                    persist_data(&state.data_path, &data)?;
+                }
+            }
+        }
+
+        if let Some(updated_at) = payload.updated_at.clone() {
+            tauri::async_runtime::spawn(async move {
+                force_reminder::submit_force_reminder_read(&updated_at).await;
+            });
+        }
+    }
+
+    *state.force_reminder_payload.lock().await = None;
+    hide_force_reminder_window_internal(&app)
 }
 
 #[tauri::command]
@@ -751,6 +1158,11 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         let _ = show_main_window_internal(app);
     }));
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        MacosLauncher::LaunchAgent,
+        None::<Vec<&str>>,
+    ));
     let builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -782,8 +1194,8 @@ pub fn run() {
             let loaded_data = Arc::new(Mutex::new(loaded_app_data));
             let current = loaded_data.blocking_lock();
             let widget_enabled = current.settings.widget_enabled;
-            let _ = apply_always_on_top(app.handle(), current.settings.always_on_top);
-            let _ = apply_widget_visibility(app.handle(), current.settings.widget_enabled);
+            let security_notice_acknowledged = current.security_notice_acknowledged;
+            let _ = apply_runtime_settings(app.handle(), &current.settings);
             drop(current);
             if !widget_enabled {
                 if let Some(window) = app.get_webview_window("main") {
@@ -845,15 +1257,16 @@ pub fn run() {
                 data: loaded_data.clone(),
                 data_path: data_path.clone(),
                 persistence_notice: Arc::new(Mutex::new(load_result.warning)),
+                update_window_payload: Arc::new(Mutex::new(None)),
                 low_balance_alert_payload: Arc::new(Mutex::new(None)),
+                force_reminder_payload: Arc::new(Mutex::new(None)),
                 low_balance_alerted_station_ids: Arc::new(Mutex::new(HashSet::new())),
             });
             start_scheduler(app.handle().clone(), loaded_data, data_path);
 
-            let app_handle = app.handle().clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(800));
-                let _ = show_security_notice_window_internal(&app_handle);
+            let startup_app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                run_startup_window_sequence(startup_app_handle, security_notice_acknowledged).await;
             });
 
             Ok(())
@@ -873,14 +1286,20 @@ pub fn run() {
             refresh_station,
             refresh_all,
             open_station_console,
+            confirm_open_external_url,
             set_always_on_top,
             show_main_window,
             hide_main_window,
             show_update_window,
             hide_update_window,
+            get_update_window_payload,
             get_low_balance_alert_payload,
+            get_force_reminder_payload,
             hide_low_balance_alert_window,
             hide_security_notice_window,
+            acknowledge_security_notice,
+            hide_force_reminder_window,
+            acknowledge_force_reminder,
             get_machine_uuid,
             snap_to_edge
         ])

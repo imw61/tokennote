@@ -1,8 +1,9 @@
 import type { AppData, AppSettings, Station } from './types'
 
 export const defaultSettings: AppSettings = {
-  globalRefreshIntervalSec: 60,
+  globalRefreshIntervalSec: 180,
   alwaysOnTop: true,
+  autoLaunchEnabled: true,
   widgetEnabled: true,
   widgetAutoHideEnabled: false,
   lowBalancePopupEnabled: false,
@@ -110,7 +111,7 @@ export function createDraft(): Station {
     loginPassword: '',
     stationType: '',
     enabled: true,
-    refreshIntervalSec: 60,
+    refreshIntervalSec: 180,
     lowBalanceThreshold: 5,
     changeThreshold: 2,
     createdAt: now,

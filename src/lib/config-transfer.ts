@@ -19,6 +19,7 @@ export type ExportableStation = {
 export type ExportableSettings = {
   globalRefreshIntervalSec: number
   alwaysOnTop: boolean
+  autoLaunchEnabled: boolean
   widgetEnabled: boolean
   widgetAutoHideEnabled: boolean
   lowBalancePopupEnabled: boolean

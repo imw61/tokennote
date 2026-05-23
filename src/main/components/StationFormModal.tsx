@@ -16,6 +16,7 @@ export function StationFormModal({
   setFormTab,
   detectingType,
   detectedType,
+  unsupportedDetectedType,
   setDetectedType,
   setDraft,
   formError,
@@ -70,6 +71,7 @@ export function StationFormModal({
           formTab={formTab}
           detectingType={detectingType}
           detectedType={detectedType}
+          unsupportedDetectedType={unsupportedDetectedType}
           setDetectedType={setDetectedType}
           setDraft={setDraft}
           onDetectStationType={onDetectStationType}

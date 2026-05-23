@@ -9,11 +9,9 @@ import { BalanceOdometer } from './components/BalanceOdometer'
 import { checkForUpdates } from './lib/update'
 import { applyPlatformMotionPreference } from './lib/platform-motion'
 import {
-  buildUpdatePopupPayload,
   getIgnoredUpdateVersion,
-  hideUpdatePopup,
   persistIgnoredUpdateVersion,
-  showUpdatePopup
+  syncUpdatePopup
 } from './lib/update-popup'
 import './styles.css'
 
@@ -37,6 +35,7 @@ type Station = {
 type AppSettings = {
   globalRefreshIntervalSec: number
   alwaysOnTop: boolean
+  autoLaunchEnabled: boolean
   widgetEnabled: boolean
   widgetAutoHideEnabled: boolean
   lowBalancePopupEnabled: boolean
@@ -188,26 +187,11 @@ function Widget() {
   }
 
   const runUpdateCheck = async () => {
-    const controller = new AbortController()
-    const timer = window.setTimeout(() => controller.abort(), 8000)
-    try {
-      const result = await checkForUpdates(controller.signal)
-      if (result.status === 'none' || result.status === 'required') {
-        persistIgnoredUpdateVersion(null)
-      }
-      const payload = buildUpdatePopupPayload(result)
-      if (!payload) {
-        await hideUpdatePopup().catch(console.error)
-        return
-      }
-      if (payload.mode === 'available' && getIgnoredUpdateVersion() === payload.latestVersion) {
-        await hideUpdatePopup().catch(console.error)
-        return
-      }
-      await showUpdatePopup(payload).catch(console.error)
-    } finally {
-      window.clearTimeout(timer)
+    const result = await checkForUpdates()
+    if (result.status === 'none' || result.status === 'required') {
+      persistIgnoredUpdateVersion(null)
     }
+    await syncUpdatePopup(result, getIgnoredUpdateVersion()).catch(console.error)
   }
 
   useEffect(() => {

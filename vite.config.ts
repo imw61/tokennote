@@ -23,6 +23,7 @@ export default defineConfig({
         update: resolve(__dirname, 'windows/update.html'),
         lowBalanceAlert: resolve(__dirname, 'windows/low-balance-alert.html'),
         securityNotice: resolve(__dirname, 'windows/security-notice.html'),
+        forceReminder: resolve(__dirname, 'windows/force-reminder.html'),
       },
     },
   },

@@ -8,6 +8,7 @@ type StationDetailPanelProps = {
   balanceHistory: BalanceHistoryPoint[]
   trendHours: number
   hasSubmittedReview: boolean
+  openingConsole: boolean
   onBackToOverview: () => void
   onRefreshStation: (id: string) => void
   onOpenConsole: (id: string) => void
@@ -22,6 +23,7 @@ export function StationDetailPanel({
   balanceHistory,
   trendHours,
   hasSubmittedReview,
+  openingConsole,
   onBackToOverview,
   onRefreshStation,
   onOpenConsole,
@@ -36,6 +38,7 @@ export function StationDetailPanel({
       balanceHistory={balanceHistory}
       trendHours={trendHours}
       hasSubmittedReview={hasSubmittedReview}
+      openingConsole={openingConsole}
       onBack={onBackToOverview}
       onRefresh={() => onRefreshStation(station.id)}
       onOpenConsole={() => onOpenConsole(station.id)}

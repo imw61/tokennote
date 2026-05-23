@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TokenNote",
-  "version": "0.3.3",
+  "version": "0.3.5",
   "identifier": "com.tokennote.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -60,8 +60,8 @@
         "maxHeight": 520,
         "resizable": false,
         "decorations": false,
-        "transparent": false,
-        "shadow": true,
+        "transparent": true,
+        "shadow": false,
         "alwaysOnTop": true,
         "visible": false,
         "skipTaskbar": true,
@@ -86,6 +86,25 @@
         "skipTaskbar": true,
         "center": true,
         "url": "/windows/security-notice.html"
+      },
+      {
+        "label": "force-reminder",
+        "title": "TokenNote · 强制提醒",
+        "width": 420,
+        "height": 260,
+        "minWidth": 420,
+        "minHeight": 260,
+        "maxWidth": 420,
+        "maxHeight": 560,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "center": true,
+        "url": "/windows/force-reminder.html"
       },
       {
         "label": "low-balance-alert",

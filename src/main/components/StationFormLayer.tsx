@@ -9,6 +9,7 @@ export function StationFormLayer({
   setFormTab,
   detectingType,
   detectedType,
+  unsupportedDetectedType,
   setDetectedType,
   setDraft,
   formError,
@@ -27,6 +28,7 @@ export function StationFormLayer({
       setFormTab={setFormTab}
       detectingType={detectingType}
       detectedType={detectedType}
+      unsupportedDetectedType={unsupportedDetectedType}
       setDetectedType={setDetectedType}
       setDraft={setDraft}
       formError={formError}

@@ -16,6 +16,7 @@ export function useStationForm({ setData, onRefreshStation }: UseStationFormOpti
   const [formTab, setFormTab] = useState<StationFormTab>('relay')
   const [detectingType, setDetectingType] = useState(false)
   const [detectedType, setDetectedType] = useState<StationTypeDetectionState>('idle')
+  const [unsupportedDetectedType, setUnsupportedDetectedType] = useState('')
   const [formSaving, setFormSaving] = useState(false)
   const [formError, setFormError] = useState('')
 
@@ -23,27 +24,33 @@ export function useStationForm({ setData, onRefreshStation }: UseStationFormOpti
     const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
     if (!normalizedBaseUrl) {
       setDetectedType('idle')
+      setUnsupportedDetectedType('')
       setDraft(current => ({ ...current, baseUrl: '', stationType: '' }))
       return
     }
     setDetectingType(true)
     try {
       const result = await invoke<{ stationType: string }>('detect_station_type', { baseUrl: normalizedBaseUrl })
-      const stationType = result.stationType === 'sub2api'
+      const rawStationType = result.stationType?.trim() ?? ''
+      const stationType = rawStationType === 'sub2api'
         ? 'sub2api'
-        : result.stationType === 'newapi'
+        : rawStationType === 'newapi'
           ? 'newapi'
+          : rawStationType && rawStationType !== 'unknown'
+            ? 'unsupported'
           : 'unknown'
       setDetectedType(stationType)
+      setUnsupportedDetectedType(stationType === 'unsupported' ? rawStationType : '')
       setDraft(current => ({
         ...current,
         baseUrl: normalizedBaseUrl,
-        stationType: stationType === 'unknown' ? '' : stationType,
+        stationType: stationType === 'newapi' || stationType === 'sub2api' ? stationType : '',
         cookie: stationType === 'sub2api' ? '' : current.cookie,
         newApiUser: stationType === 'sub2api' ? '' : current.newApiUser
       }))
     } catch {
       setDetectedType('unknown')
+      setUnsupportedDetectedType('')
       setDraft(current => ({ ...current, baseUrl: normalizedBaseUrl, stationType: '' }))
     } finally {
       setDetectingType(false)
@@ -91,6 +98,7 @@ export function useStationForm({ setData, onRefreshStation }: UseStationFormOpti
     setEditingId(null)
     setFormTab('relay')
     setDetectedType('idle')
+    setUnsupportedDetectedType('')
     setFormError('')
     setShowForm(true)
   }
@@ -100,6 +108,7 @@ export function useStationForm({ setData, onRefreshStation }: UseStationFormOpti
     setEditingId(station.id)
     setFormTab(station.stationType === 'deepseek' ? 'provider' : 'relay')
     setDetectedType('idle')
+    setUnsupportedDetectedType('')
     setFormError('')
     setShowForm(true)
   }
@@ -120,6 +129,7 @@ export function useStationForm({ setData, onRefreshStation }: UseStationFormOpti
     setFormTab,
     detectingType,
     detectedType,
+    unsupportedDetectedType,
     setDetectedType,
     formSaving,
     formError,

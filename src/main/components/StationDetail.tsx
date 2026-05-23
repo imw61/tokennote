@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Clock3, ExternalLink, Gauge, Layers3, MessageSquareQuote, RefreshCw, Settings, Trash2, WalletCards } from 'lucide-react'
+import { Activity, ArrowLeft, Clock3, ExternalLink, Gauge, Layers3, Loader2, MessageSquareQuote, RefreshCw, Settings, Trash2, WalletCards } from 'lucide-react'
 import { useMemo } from 'react'
 import { BalanceTrendChart } from '../../components/BalanceTrendChart'
 import { PieChart } from '../../components/PieChart'
@@ -22,6 +22,7 @@ type StationDetailProps = {
   balanceHistory: BalanceHistoryPoint[]
   trendHours: number
   hasSubmittedReview: boolean
+  openingConsole: boolean
   onBack: () => void
   onRefresh: () => void
   onOpenConsole: () => void
@@ -36,6 +37,7 @@ export function StationDetail({
   balanceHistory,
   trendHours,
   hasSubmittedReview,
+  openingConsole,
   onBack,
   onRefresh,
   onOpenConsole,
@@ -87,8 +89,8 @@ export function StationDetail({
             <button onClick={onOpenReview} className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-primary-50 hover:text-primary-600 text-gray-500 transition-all duration-200 interactive-bounce" title="评价站点">
               <MessageSquareQuote size={13} />
             </button>
-            <button onClick={onOpenConsole} className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-primary-50 hover:text-primary-600 text-gray-500 transition-all duration-200 interactive-bounce" title="打开站点网页">
-              <ExternalLink size={13} />
+            <button onClick={onOpenConsole} disabled={openingConsole} className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-primary-50 hover:text-primary-600 text-gray-500 transition-all duration-200 interactive-bounce disabled:opacity-50 disabled:cursor-not-allowed" title={openingConsole ? '正在加载控制台...' : '打开站点网页'}>
+              {openingConsole ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
             </button>
             <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded-[10px] bg-gray-100 hover:bg-gray-200 text-gray-500 transition-all duration-200 interactive-bounce">
               <Settings size={13} />
@@ -125,7 +127,7 @@ export function StationDetail({
       </div>
 
       {snapshot?.status === 'failed' ? (
-        <div className="px-3 py-2.5 rounded-xl bg-red-50 border border-red-200 text-[11px] font-semibold text-red-600">
+        <div className="px-3 py-2.5 rounded-xl bg-red-50 border border-red-200 text-[10px] font-semibold text-red-600">
           {snapshot.errorMessage}
         </div>
       ) : null}

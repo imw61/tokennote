@@ -2,6 +2,7 @@
 
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
+import { fetchWithTimeout } from './fetch-with-timeout'
 import { validateExternalUrl } from './safe-external-url'
 
 export type UpdateManifest = {
@@ -28,7 +29,12 @@ export type UpdateCheckResult = {
   errorMessage?: string
 }
 
-const updateManifestUrl = validateExternalUrl('https://update.tokennote.dev/version.json')
+type ApiSuccess<T> = {
+  ok: true
+  data: T
+}
+
+const updateManifestUrl = validateExternalUrl('https://update.tokennote.dev/public/version')
 
 function normalizeVersion(version: string) {
   return version.trim().replace(/^[vV]/, '')
@@ -71,7 +77,7 @@ async function resolveCurrentVersion() {
 
 function normalizeManifest(raw: unknown): UpdateManifest {
   if (!isRecord(raw)) {
-    throw new Error('version.json 结构无效')
+    throw new Error('版本信息结构无效')
   }
 
   const latestVersion = typeof raw.latestVersion === 'string' ? normalizeVersion(raw.latestVersion) : ''
@@ -84,13 +90,13 @@ function normalizeManifest(raw: unknown): UpdateManifest {
   const notes = parseNotes(raw.notes)
 
   if (!latestVersion) {
-    throw new Error('version.json 缺少 `latestVersion`')
+    throw new Error('版本信息缺少 `latestVersion`')
   }
   if (!minSupportedVersion) {
-    throw new Error('version.json 缺少 `minSupportedVersion`')
+    throw new Error('版本信息缺少 `minSupportedVersion`')
   }
   if (!releaseUrl) {
-    throw new Error('version.json 缺少 `releaseUrl`')
+    throw new Error('版本信息缺少 `releaseUrl`')
   }
 
   const safeReleaseUrl = validateExternalUrl(releaseUrl, { allowHttpLoopback: true })
@@ -156,6 +162,15 @@ export function getUpdateDownloadLinks(manifest: UpdateManifest): UpdateLink[] {
   return uniqueLinks
 }
 
+function normalizeUpdateRequestError(error: unknown) {
+  if (error instanceof Error) {
+    if (error.message.trim()) {
+      return error.message
+    }
+  }
+  return '无法连接更新服务，已跳过本次检查。'
+}
+
 export async function checkForUpdates(signal?: AbortSignal): Promise<UpdateCheckResult> {
   const currentVersion = await resolveCurrentVersion()
   const manifestUrl = updateManifestUrl
@@ -163,23 +178,23 @@ export async function checkForUpdates(signal?: AbortSignal): Promise<UpdateCheck
   const requestUrl = appendManifestRequestMetadata(manifestUrl, currentVersion, machineUuidValue)
 
   try {
-    const response = await fetch(requestUrl, {
+    const response = await fetchWithTimeout(requestUrl, {
       method: 'GET',
       cache: 'no-store',
       headers: {
-        accept: 'application/json',
-        'x-tokennote-version': currentVersion,
-        'x-tokennote-source': 'desktop',
-        ...(machineUuidValue ? { 'x-tokennote-machine-uuid': machineUuidValue } : {})
+        accept: 'application/json'
       },
-      signal
+      signal,
+      timeoutMs: 8000,
+      timeoutMessage: '连接更新服务超时，已跳过本次检查。'
     })
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }
 
-    const manifest = normalizeManifest(await response.json())
+    const payload = await response.json() as ApiSuccess<unknown>
+    const manifest = normalizeManifest(payload.data)
     const isRequired = compareVersions(currentVersion, manifest.minSupportedVersion) < 0
     const hasNewVersion = compareVersions(currentVersion, manifest.latestVersion) < 0
 
@@ -194,7 +209,7 @@ export async function checkForUpdates(signal?: AbortSignal): Promise<UpdateCheck
       status: 'error',
       currentVersion,
       manifestUrl,
-      errorMessage: error instanceof Error ? error.message : String(error)
+      errorMessage: normalizeUpdateRequestError(error)
     }
   }
 }

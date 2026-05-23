@@ -1,25 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { checkForUpdates, getUpdateDownloadLinks, type UpdateCheckResult } from '../../lib/update'
 import {
-  buildUpdatePopupPayload,
   getIgnoredUpdateVersion,
-  hideUpdatePopup,
   persistIgnoredUpdateVersion,
-  showUpdatePopup
+  syncUpdatePopup
 } from '../../lib/update-popup'
-
-async function syncUpdatePopup(result: UpdateCheckResult, ignoredVersion: string | null) {
-  const payload = buildUpdatePopupPayload(result)
-  if (!payload) {
-    await hideUpdatePopup().catch(console.error)
-    return
-  }
-  if (payload.mode === 'available' && ignoredVersion === payload.latestVersion) {
-    await hideUpdatePopup().catch(console.error)
-    return
-  }
-  await showUpdatePopup(payload).catch(console.error)
-}
 
 export function useUpdateManager() {
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null)
@@ -43,10 +28,8 @@ export function useUpdateManager() {
 
   const runUpdateCheck = useCallback(async (silent = false) => {
     if (!silent) setCheckingUpdates(true)
-    const controller = new AbortController()
-    const timer = window.setTimeout(() => controller.abort(), 8000)
     try {
-      const result = await checkForUpdates(controller.signal)
+      const result = await checkForUpdates()
       setUpdateInfo(result)
       const storedIgnoredVersion = getIgnoredUpdateVersion()
       const nextIgnoredVersion = result.status === 'none' || result.status === 'required'
@@ -57,9 +40,8 @@ export function useUpdateManager() {
       } else {
         setIgnoredUpdateVersion(storedIgnoredVersion)
       }
-      await syncUpdatePopup(result, nextIgnoredVersion)
+      await syncUpdatePopup(result, nextIgnoredVersion).catch(console.error)
     } finally {
-      window.clearTimeout(timer)
       if (!silent) setCheckingUpdates(false)
     }
   }, [setIgnoredVersion])
@@ -67,7 +49,7 @@ export function useUpdateManager() {
   const restoreUpdateReminder = useCallback(async () => {
     setIgnoredVersion(null)
     if (updateInfo) {
-      await syncUpdatePopup(updateInfo, null)
+      await syncUpdatePopup(updateInfo, null).catch(console.error)
     }
   }, [setIgnoredVersion, updateInfo])
 

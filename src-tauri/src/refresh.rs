@@ -172,9 +172,83 @@ fn failed_snapshot(station: &Station, error: String) -> BalanceSnapshot {
         models: Vec::new(),
         fetched_at: now_ts(),
         status: "failed".to_string(),
-        error_message: Some(error),
+        error_message: Some(summarize_station_fetch_error(&error)),
         api_station_name: None,
     }
+}
+
+fn extract_http_status_code(error: &str) -> Option<u16> {
+    let marker = "HTTP ";
+    let start = error.find(marker)? + marker.len();
+    error[start..].split_whitespace().next()?.parse::<u16>().ok()
+}
+
+fn summarize_station_fetch_error(error: &str) -> String {
+    let trimmed = error.trim();
+    let first_line = trimmed.lines().next().unwrap_or(trimmed).trim();
+    let lower = trimmed.to_lowercase();
+
+    if !trimmed.contains('\n') && first_line.chars().count() <= 28 {
+        return first_line.to_string();
+    }
+
+    if lower.contains("请重新登录")
+        || lower.contains("请登录")
+        || lower.contains("invalid token")
+        || lower.contains("authorization failed")
+    {
+        return "登录状态已失效，请重新登录".to_string();
+    }
+
+    if let Some(status) = extract_http_status_code(trimmed) {
+        return match status {
+            400 => "站点配置有误，请检查后重试".to_string(),
+            401 | 403 => "登录状态已失效，请重新登录".to_string(),
+            404 => "站点接口不存在，请检查地址".to_string(),
+            408 => "站点响应超时，请稍后重试".to_string(),
+            429 => "请求过于频繁，请稍后重试".to_string(),
+            500..=599 => "站点服务异常，请稍后重试".to_string(),
+            _ => "获取站点信息失败，请稍后重试".to_string(),
+        };
+    }
+
+    if lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("deadline has elapsed")
+    {
+        return "站点响应超时，请稍后重试".to_string();
+    }
+
+    if lower.contains("failed to lookup address information")
+        || lower.contains("name or service not known")
+        || lower.contains("nodename nor servname provided")
+        || lower.contains("dns")
+    {
+        return "域名解析失败，请检查站点地址".to_string();
+    }
+
+    if lower.contains("connection refused")
+        || lower.contains("connection reset")
+        || lower.contains("connection closed")
+        || lower.contains("error trying to connect")
+        || lower.contains("tcp connect error")
+    {
+        return "连接站点失败，请检查地址或网络".to_string();
+    }
+
+    if lower.contains("certificate") || lower.contains("tls") || lower.contains("ssl") {
+        return "站点证书异常，请检查 HTTPS 配置".to_string();
+    }
+
+    if lower.contains("解析 ") || lower.contains("expected") {
+        return "站点返回异常，请稍后重试".to_string();
+    }
+
+    if first_line.chars().count() <= 40 {
+        return first_line.to_string();
+    }
+
+    "获取站点信息失败，请稍后重试".to_string()
 }
 
 pub(crate) struct StationRefreshResult {

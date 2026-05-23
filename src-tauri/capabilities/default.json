@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default permissions for TokenNote",
-  "windows": ["main", "widget", "update", "low-balance-alert"],
+  "windows": ["main", "widget", "update", "low-balance-alert", "security-notice", "force-reminder"],
   "permissions": [
     "core:default",
     "core:window:allow-close",

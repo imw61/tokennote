@@ -2,6 +2,7 @@
 
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
+import { fetchWithTimeout } from './fetch-with-timeout'
 import type { AppData } from '../main/types'
 
 export type StationReviewInput = {
@@ -24,6 +25,11 @@ export type StationReviewRecord = {
   source: string
 }
 
+type ApiSuccess<T> = {
+  ok: true
+  data: T
+}
+
 export const stationReviewRatingLabels: Record<number, string> = {
   1: '拉完了',
   2: 'NPC',
@@ -36,7 +42,7 @@ export function formatStationReviewRatingLabel(rating: number) {
   return stationReviewRatingLabels[rating] ?? `${rating} 星`
 }
 
-const reviewApiUrl = 'https://update.tokennote.dev/api/reviews'
+const reviewApiUrl = 'https://update.tokennote.dev/public/review-submit'
 
 async function resolveCurrentVersion() {
   try {
@@ -54,28 +60,46 @@ async function resolveMachineUuid() {
   }
 }
 
+function normalizeReviewRequestError(error: unknown) {
+  if (error instanceof Error) {
+    const message = error.message.trim()
+    if (message) {
+      return message
+    }
+  }
+  return '无法连接评价服务，请稍后重试。'
+}
+
 export async function submitStationReview(input: StationReviewInput): Promise<StationReviewRecord> {
   const currentVersion = await resolveCurrentVersion()
   const machineUuid = await resolveMachineUuid()
-  const response = await fetch(reviewApiUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json',
-      'x-tokennote-version': currentVersion,
-      'x-tokennote-source': 'desktop',
-      ...(machineUuid ? { 'x-tokennote-machine-uuid': machineUuid } : {})
-    },
-    body: JSON.stringify(input)
-  })
+  try {
+    const response = await fetchWithTimeout(reviewApiUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json'
+      },
+      body: JSON.stringify({
+        ...input,
+        clientVersion: currentVersion,
+        source: 'desktop',
+        machineUuid
+      }),
+      timeoutMs: 8000,
+      timeoutMessage: '连接评价服务超时，请稍后重试。'
+    })
 
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null)
-    throw new Error(payload?.error || `提交评价失败：HTTP ${response.status}`)
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error(payload?.error || `提交评价失败：HTTP ${response.status}`)
+    }
+
+    const payload = await response.json() as ApiSuccess<StationReviewRecord>
+    return payload.data
+  } catch (error) {
+    throw new Error(normalizeReviewRequestError(error))
   }
-
-  const payload = await response.json() as { item: StationReviewRecord }
-  return payload.item
 }
 
 export async function saveLocalStationReviewRecord(input: {

@@ -33,6 +33,7 @@ export function MainPanels({
   reviewHasSubmitted,
   reviewLocalRecord,
   persistenceNotice,
+  openingConsoleId,
   onChangeSettings,
   onRestoreUpdateReminder,
   onCheckUpdate,
@@ -111,6 +112,7 @@ export function MainPanels({
         balanceHistory={selectedBalanceHistory}
         trendHours={settings.statsRangeHours}
         hasSubmittedReview={reviewHasSubmitted}
+        openingConsole={openingConsoleId === selectedStation.id}
         onBackToOverview={onBackToOverview}
         onRefreshStation={onRefreshStation}
         onOpenConsole={onOpenConsole}

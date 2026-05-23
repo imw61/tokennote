@@ -30,6 +30,16 @@ html.low-balance-alert-page, body.low-balance-alert-page {
   scrollbar-width: none;
 }
 
+html.force-reminder-page, body.force-reminder-page {
+  @apply h-full m-0 overflow-hidden bg-transparent;
+  scrollbar-width: none;
+}
+
+html.update-page, body.update-page {
+  @apply h-full m-0 overflow-hidden bg-transparent;
+  scrollbar-width: none;
+}
+
 html.security-notice-page, body.security-notice-page {
   @apply h-full m-0 overflow-hidden bg-transparent;
   scrollbar-width: none;
@@ -39,6 +49,10 @@ html.widget-page::-webkit-scrollbar,
 body.widget-page::-webkit-scrollbar,
 html.low-balance-alert-page::-webkit-scrollbar,
 body.low-balance-alert-page::-webkit-scrollbar,
+html.force-reminder-page::-webkit-scrollbar,
+body.force-reminder-page::-webkit-scrollbar,
+html.update-page::-webkit-scrollbar,
+body.update-page::-webkit-scrollbar,
 html.security-notice-page::-webkit-scrollbar,
 body.security-notice-page::-webkit-scrollbar {
   display: none;
@@ -57,6 +71,10 @@ body.security-notice-page::-webkit-scrollbar {
 }
 
 #low-balance-alert-root {
+  @apply w-full h-full m-0 bg-transparent overflow-hidden;
+}
+
+#force-reminder-root {
   @apply w-full h-full m-0 bg-transparent overflow-hidden;
 }
 

@@ -245,8 +245,10 @@ pub(crate) fn normalize_imported_data(input: AppDataImport) -> Result<AppData, S
         settings,
         stations,
         snapshots: Vec::new(),
+        security_notice_acknowledged: false,
         balance_history: Vec::new(),
         local_station_reviews,
+        read_force_reminder_updated_ats: Vec::new(),
     })
 }
 
@@ -360,6 +362,12 @@ fn normalize_loaded_data(mut data: AppData) -> AppData {
     data.settings.refresh_concurrency =
         normalize_refresh_concurrency(data.settings.refresh_concurrency) as u64;
     trim_balance_history(&mut data.balance_history, now_ts() - 7 * 24 * 3600, 3000);
+    data.read_force_reminder_updated_ats.retain(|item| !item.trim().is_empty());
+    data.read_force_reminder_updated_ats.dedup();
+    if data.read_force_reminder_updated_ats.len() > 100 {
+        let overflow = data.read_force_reminder_updated_ats.len() - 100;
+        data.read_force_reminder_updated_ats.drain(0..overflow);
+    }
     data
 }
 

@@ -8,6 +8,7 @@ type StationAddressSectionProps = {
   formTab: StationFormTab
   detectingType: boolean
   detectedType: StationTypeDetectionState
+  unsupportedDetectedType: string
   setDetectedType: Dispatch<SetStateAction<StationTypeDetectionState>>
   setDraft: Dispatch<SetStateAction<Station>>
   onDetectStationType: (baseUrl: string) => void
@@ -17,6 +18,7 @@ function detectionBadgeClass(detectingType: boolean, detectedType: StationTypeDe
   if (detectingType) return 'bg-white border-gray-200 text-gray-400'
   if (detectedType === 'sub2api') return 'bg-primary-50 border-primary-200 text-primary-600'
   if (detectedType === 'newapi') return 'bg-emerald-50 border-emerald-200 text-emerald-600'
+  if (detectedType === 'unsupported') return 'bg-amber-50 border-amber-200 text-amber-700'
   if (detectedType === 'unknown') return 'bg-red-50 border-red-200 text-red-600'
   return 'bg-white border-gray-200 text-gray-400'
 }
@@ -25,6 +27,7 @@ function detectionLabel(detectingType: boolean, detectedType: StationTypeDetecti
   if (detectingType) return '识别中...'
   if (detectedType === 'sub2api') return 'Sub2API'
   if (detectedType === 'newapi') return 'NewAPI'
+  if (detectedType === 'unsupported') return '暂不支持'
   if (detectedType === 'unknown') return '未知'
   return '--'
 }
@@ -35,6 +38,7 @@ export function StationAddressSection({
   formTab,
   detectingType,
   detectedType,
+  unsupportedDetectedType,
   setDetectedType,
   setDraft,
   onDetectStationType
@@ -79,6 +83,12 @@ export function StationAddressSection({
       {!editingId && detectedType === 'unknown' ? (
         <div className="px-3 py-2.5 rounded-xl bg-red-50 border border-red-200 text-[11px] font-semibold text-red-600">
           无法识别站点类型，请确认输入的是 NewAPI 或 Sub2API 的控制台域名（只填到域名即可）。
+        </div>
+      ) : null}
+
+      {!editingId && detectedType === 'unsupported' ? (
+        <div className="px-3 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] font-semibold text-amber-700">
+          已识别到站点类型「{unsupportedDetectedType}」，但当前客户端暂不支持该类型，请升级客户端。
         </div>
       ) : null}
     </>
