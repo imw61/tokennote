@@ -24,7 +24,7 @@ jobs:
           - name: Windows x64
             platform: windows-latest
             rustTargets: ""
-            args: --bundles msi,nsis
+            args: --bundles nsis
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
@@ -89,3 +89,26 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ github.ref_name }}" "src-tauri/target/release/TokenNote_${{ github.ref_name }}_windows-x64_portable.zip" --clobber
+
+      - name: Re-upload macOS dmg (failsafe)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 兜底：tauri-action 在多 macOS job 并发上传时偶发会把某个 dmg 挤掉，
+          # 这里在 job 内显式再 upload 一次（同名则覆盖），保证两种架构的 dmg 都在 release 里。
+          dmg_path=$(ls src-tauri/target/${{ matrix.rustTargets }}/release/bundle/dmg/*.dmg 2>/dev/null | head -n 1)
+          if [ -z "$dmg_path" ]; then
+            echo "未找到 dmg，跳过兜底上传" >&2
+            exit 0
+          fi
+          # 等 tauri-action 创建好 release 再上传（最长 60 秒）
+          for i in $(seq 1 12); do
+            if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              break
+            fi
+            echo "等待 release 创建... ($i/12)"
+            sleep 5
+          done
+          gh release upload "${{ github.ref_name }}" "$dmg_path" --repo "${{ github.repository }}" --clobber
