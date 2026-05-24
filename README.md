@@ -117,7 +117,7 @@ A：先确认站点类型选择正确，再尝试单独刷新该站点；总览�
 A：在「设置」中使用配置导出，导出文件已加密保存，可在本机或新设备中再次导入。
 
 **Q：我想在手机上上使用？**
-A：在下载中心(https://update.tokennote.dev/releases)下载安卓版本（暂不支持ios）。
+A：在[下载中心](https://update.tokennote.dev/releases)下载安卓版本（暂不支持ios）。
 
 ---
 
